@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Nova Fitness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body,#root{height:100%;width:100%;}
+    body{background:#0F1014;font-family:'DM Sans',sans-serif;color:#E8E9EF;overflow:hidden;}
+    ::-webkit-scrollbar{width:3px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background:#2A2B35;border-radius:3px;}
+    @keyframes bounce{0%,80%,100%{transform:scale(.6);opacity:.4}40%{transform:scale(1);opacity:1}}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
+    input::placeholder{color:#55565F;}
+    button{font-family:'DM Sans',sans-serif;}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ─── Theme ────────────────────────────────────────────────────────────────
+    const R="#CE2029",BG="#0F1014",CARD="#1E1F27",DEEP="#13141A",BORDER="#2A2B35",TXT="#E8E9EF",DIM="#9A9BA8",FAINT="#55565F",GREEN="#4ADE80",GOLD="#FBBF24",BLUE="#38BDF8",PURPLE="#A78BFA";
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+    function useLS(key,init){
+      const[v,setV]=useState(()=>{try{const s=localStorage.getItem(key);return s!==null?JSON.parse(s):init;}catch{return init;}});
+      const set=useCallback(fn=>setV(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem(key,JSON.stringify(next));}catch{}return next;}),[key]);
+      return[v,set];
+    }
+    function nukeAll(){try{Object.keys(localStorage).filter(k=>k.startsWith("nv6")&&k!=="nv6_apikey").forEach(k=>localStorage.removeItem(k));}catch{}}
+    async function ask(messages,system,max_tokens=500){
+      const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens,system,messages})});
+      const d=await r.json();if(d.error)throw new Error(d.error.message);
+      return d.content?.map(b=>b.text||"").join("")||"";
+    }
+    function parseJSON(raw){
+      const s=raw.replace(/```json\s*/gi,"").replace(/```/g,"").trim();
+      try{return JSON.parse(s);}catch{}
+      let depth=0,a=-1,b=-1;
+      for(let i=0;i<s.length;i++){if(s[i]==="{"){if(!depth)a=i;depth++;}else if(s[i]==="}"){if(!--depth){b=i;break;}}}
+      if(a>=0&&b>a)return JSON.parse(s.slice(a,b+1));
+      throw new Error("no JSON");
+    }
+    const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    const todayName=()=>DAYS[new Date().getDay()];
+    const dateKey=()=>new Date().toISOString().slice(0,10);
+    const exId=ex=>ex.id||ex.name.replace(/\s+/g,"_").toLowerCase();
+    const lk=(ex,s,dk)=>`${exId(ex)}__${dk}__s${s}`;
+    const XP={SET:10,WORKOUT:100,PR:50,BODYWEIGHT:20,NUTRITION_DAY:30,STREAK_BONUS:25};
+
+    // ─── Prompts ──────────────────────────────────────────────────────────────
+    const SYS_ONBOARD=`You are Nova — a real, experienced personal fitness trainer. Warm, direct, no-nonsense. You text like a human.\n\nInitial consultation rules:\nONE question per message. Never two. Max 2 short sentences.\nDon't echo back. Just react and move on.\nCover ALL topics in order:\n1. fitness goal\n2. experience/level\n3. height and weight (ask together: "What's your height and weight?")\n4. days/week available to train\n5. where they train (home, gym, etc.)\n6. injuries/limitations\n7. age\n8. session length\n9. want nutrition guidance?\nAfter all topics, say you have what you need and ask if there's anything else. Put [READY] in that message.\n\nAfter EVERY message output on a NEW line: CHIPS: option1, option2, option3\nAlways include 2-4 chips relevant to your question.`;
+
+    const SYS_PLAN=`You are Nova, a personal trainer. Output ONLY a single raw JSON object. No markdown, no fences. Start with { end with }.\n{"summary":"2-3 sentence overview","includeNutrition":true,"weeklySchedule":[{"day":"Monday","focus":"Push — Chest & Shoulders","exercises":[{"id":"bench_press","name":"Bench Press","sets":4,"reps":"8-10","note":"Control the descent","suggestedWeight":"45-95 lbs"}]},{"day":"Tuesday","focus":"Rest","exercises":[]}],"nutrition":{"calories":"2400","protein":"180g","carbs":"240g","fat":"70g","notes":"Short tip."},"coachNote":"Short motivating message."}\nAll 7 days required. Rest days: empty exercises array. Every exercise needs id (snake_case) and name. Tailor all other fields to the activity type:\n- Strength/gym: sets (number), reps (string), note, suggestedWeight\n- Running/cardio: sets=1, reps="1 run", note (pace/effort cue), suggestedWeight="" — use the note field for distance or duration (e.g. "3 miles easy", "20 min zone 2")\n- Yoga/mobility/bodyweight: sets, reps (e.g. "30 sec hold"), note, suggestedWeight=""\n- HIIT/circuit: sets (rounds), reps (work interval e.g. "40 sec on"), note, suggestedWeight=""\nNever show "lbs" or weight fields for non-lifting activities. Match the language to the sport. Output ONLY the JSON.`;
+
+    const SYS_ADJUST=plan=>`You are Nova, a personal trainer. The client wants to adjust their existing plan. Be conversational and brief. Include [READY] when ready to rebuild.\nCurrent plan summary: ${plan?.summary}\nSchedule: ${plan?.weeklySchedule?.map(d=>`${d.day}: ${d.focus}`).join(", ")}\n\nAfter EVERY message output on a NEW line: CHIPS: option1, option2\nAlways include 2-3 chips.`;
+
+    const SYS_COACH=(plan,today,logSummary)=>`You are Nova, a personal fitness trainer texting your client. Direct, warm, real. Today: ${today}. Plan: ${plan?.summary}. Today's workout: ${JSON.stringify(plan?.weeklySchedule?.find(d=>d.day===today))}. Recent activity: ${logSummary}. Keep replies 2-4 sentences.`;
+
+    const SYS_POST_WORKOUT=(plan,today,completed,prs)=>`You are Nova, a personal fitness trainer. Your client just finished their workout. Today: ${today}. Workout: ${plan?.weeklySchedule?.find(d=>d.day===today)?.focus}. Sets completed: ${completed}. New PRs: ${prs.join(", ")||"none"}. Send a short punchy genuine post-workout message. 2-3 sentences. Be real, not generic.`;
+
+    const SYS_REENGAGE=(plan,daysMissed,lastDay,today)=>`You are Nova, a personal fitness trainer. Your client just opened the app after being away. Days since last workout: ${daysMissed}. Last workout was: ${lastDay||"unknown"}. Today is ${today}. Their plan: ${plan?.summary}. Send a warm, shame-free, real re-engagement message. Acknowledge the gap without judgment. Be brief (2-3 sentences), direct, and human. No toxic positivity. Make them feel like picking back up is easy and normal.`;
+
+    // ─── Shared UI ────────────────────────────────────────────────────────────
+    function Confetti({go}){
+      const cv=useRef(null),af=useRef(null);
+      useEffect(()=>{
+        if(!go)return;const c=cv.current;if(!c)return;
+        const x=c.getContext("2d");c.width=c.offsetWidth||400;c.height=c.offsetHeight||700;
+        const ps=Array.from({length:100},()=>({x:Math.random()*c.width,y:-10,vx:(Math.random()-.5)*7,vy:Math.random()*4+2,w:Math.random()*12+4,h:Math.random()*7+3,col:[R,"#FF6B6B",GREEN,GOLD,PURPLE,BLUE][~~(Math.random()*6)],r:Math.random()*360,rv:(Math.random()-.5)*10,life:1}));
+        const frame=()=>{x.clearRect(0,0,c.width,c.height);let alive=false;ps.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=.09;p.r+=p.rv;p.life-=.012;if(p.y<c.height&&p.life>0)alive=true;x.save();x.globalAlpha=Math.max(0,p.life);x.translate(p.x,p.y);x.rotate(p.r*Math.PI/180);x.fillStyle=p.col;x.fillRect(-p.w/2,-p.h/2,p.w,p.h);x.restore();});if(alive)af.current=requestAnimationFrame(frame);};
+        af.current=requestAnimationFrame(frame);return()=>cancelAnimationFrame(af.current);
+      },[go]);
+      return <canvas ref={cv} style={{position:"fixed",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:9999}}/>;
+    }
+
+    const Av=({sz=30})=><div style={{width:sz,height:sz,borderRadius:"50%",background:`linear-gradient(135deg,${R},#E8525A)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:800,fontSize:sz*.43,flexShrink:0}}>N</div>;
+
+    const Dots=()=><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}><Av/><div style={{display:"flex",gap:5,padding:"10px 14px",background:CARD,borderRadius:"3px 16px 16px 16px"}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:R,animation:"bounce 1.2s ease infinite",animationDelay:`${i*.15}s`}}/>)}</div></div>;
+
+    function Bubble({m}){
+      const nova=m.role==="assistant";
+      return <div style={{display:"flex",justifyContent:nova?"flex-start":"flex-end",marginBottom:10,animation:"fadeUp .22s ease"}}>{nova&&<div style={{marginRight:8,marginTop:3}}><Av/></div>}<div style={{maxWidth:"78%",padding:"10px 14px",borderRadius:nova?"3px 16px 16px 16px":"16px 3px 16px 16px",background:nova?CARD:R,color:TXT,fontSize:14.5,lineHeight:1.65}}>{m.content}</div></div>;
+    }
+
+    function ResetBtn({onReset}){
+      const[step,setStep]=useState(0);
+      if(step===0)return <button onClick={()=>setStep(1)} style={{fontSize:12,color:FAINT,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontFamily:"inherit"}}>↺ Restart</button>;
+      return <div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:11,color:DIM}}>Clear everything?</span><button onClick={()=>{setStep(0);onReset();}} style={{fontSize:12,fontWeight:700,color:"#fff",background:R,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>Yes</button><button onClick={()=>setStep(0)} style={{fontSize:12,color:FAINT,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>No</button></div>;
+    }
+
+    function TabBar({tabs,active,onChange}){
+      return <div style={{display:"flex",gap:3,padding:"10px 14px 0",flexShrink:0}}>{tabs.map(t=><button key={t.id} onClick={()=>onChange(t.id)} style={{flex:1,padding:"7px 4px",borderRadius:10,border:`1.5px solid ${active===t.id?"#CE202955":"transparent"}`,background:active===t.id?"#CE202914":"transparent",color:active===t.id?R:FAINT,cursor:"pointer",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:.5,transition:"all .2s"}}><div style={{fontSize:15,marginBottom:1}}>{t.icon}</div>{t.label}</button>)}</div>;
+    }
+
+    // ─── Chips ────────────────────────────────────────────────────────────────
+    function ChipRow({chips,onSend}){
+      if(!chips?.length)return null;
+      return(
+        <div style={{padding:"8px 16px 4px",display:"flex",flexDirection:"column",gap:6}}>
+          {chips.map((c,i)=>(
+            <button key={i} onClick={()=>onSend(c)}
+              style={{alignSelf:"flex-start",padding:"7px 16px",borderRadius:20,border:`1.5px solid ${BORDER}`,background:DEEP,color:DIM,fontSize:13,cursor:"pointer",fontFamily:"inherit",transition:"all .15s",whiteSpace:"nowrap"}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=R;e.currentTarget.style.color=TXT;e.currentTarget.style.background="#CE202914";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.color=DIM;e.currentTarget.style.background=DEEP;}}>
+              {c}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Onboarding / Adjust Chat ─────────────────────────────────────────────
+    function parseNovaMsg(raw){
+      const m=raw.match(/CHIPS:\s*(.+)/i);
+      const chips=m?m[1].split(/,|\n/).map(c=>c.trim()).filter(Boolean):[];
+      return{content:raw.replace(/CHIPS:.*/i,"").replace("[READY]","").trim(),chips};
+    }
+
+    function AdjustPlanSummary({plan}){
+      if(!plan)return null;
+      const workoutDays=plan.weeklySchedule?.filter(d=>d.exercises?.length>0)||[];
+      return(
+        <div style={{padding:"11px 14px",background:DEEP,borderRadius:12,border:`1px solid ${BORDER}`,marginBottom:10}}>
+          <div style={{fontSize:9,color:R,textTransform:"uppercase",letterSpacing:2,marginBottom:5}}>Your Current Plan</div>
+          <div style={{fontSize:12,color:DIM,lineHeight:1.55,marginBottom:8}}>{plan.summary}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {workoutDays.map((d,i)=>(
+              <div key={i} style={{background:CARD,borderRadius:7,padding:"3px 9px",fontSize:11}}>
+                <span style={{color:R,fontWeight:700}}>{d.day.slice(0,3)}</span>
+                <span style={{color:FAINT,marginLeft:4}}>{d.focus.split("—")[0].trim()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function Chat({isAdjust,existingPlan,onDone,onCancel,onReset}){
+      const[msgs,setMsgs]=useState([]);
+      const[inp,setInp]=useState("");
+      const[loading,setLoading]=useState(false);
+      const[ready,setReady]=useState(false);
+      const[building,setBuilding]=useState(false);
+      const[err,setErr]=useState("");
+      const ref=useRef(null);const hist=useRef([]);
+      useEffect(()=>{
+        const txt=isAdjust?"What do you want to change about your plan?":"Hey! I'm Nova — your personal trainer. What's your name, and what's got you wanting to train?";
+        const chips=isAdjust?["Change exercises","Adjust days/schedule","Swap rest days","Update my goal"]:[];
+        setMsgs([{role:"assistant",content:txt,chips}]);
+        hist.current=[{role:"assistant",content:txt}];
+      },[]);
+      useEffect(()=>{setTimeout(()=>ref.current?.scrollIntoView({behavior:"smooth"}),60);},[msgs,loading]);
+      const send=async txt=>{
+        const t=(txt||inp).trim();if(!t||loading||building)return;
+        setInp("");const u={role:"user",content:t};const h=[...hist.current,u];
+        hist.current=h;setMsgs(prev=>[...prev.map(m=>({...m,chips:[]})),u]);setLoading(true);
+        try{
+          const sys=isAdjust?SYS_ADJUST(existingPlan):SYS_ONBOARD;
+          const raw=await ask(h.map(m=>({role:m.role,content:m.content})),sys,400);
+          const{content,chips}=parseNovaMsg(raw);const isReady=raw.includes("[READY]");
+          hist.current=[...h,{role:"assistant",content}];
+          setMsgs(prev=>[...prev,{role:"assistant",content,chips:isReady?[]:chips}]);
+          if(isReady)setReady(true);
+        }catch{setMsgs(prev=>[...prev,{role:"assistant",content:"Lost signal — try again.",chips:[]}]);}
+        setLoading(false);
+      };
+      const build=async()=>{
+        setBuilding(true);setErr("");
+        try{
+          const ctx=isAdjust
+            ?`Update the plan based on conversation. Keep anything not discussed. Client feedback: ${hist.current.filter(m=>m.role==="user").map(m=>m.content).join(" | ")}. Original plan: ${JSON.stringify(existingPlan)}.`
+            :`Generate complete personalized fitness plan. Full conversation:\n${hist.current.map(m=>`${m.role}: ${m.content}`).join("\n")}`;
+          let raw=await ask([{role:"user",content:ctx}],SYS_PLAN,4000);
+          let plan;try{plan=parseJSON(raw);}catch{
+            raw=await ask([{role:"user",content:ctx},{role:"assistant",content:raw},{role:"user",content:"Output ONLY raw JSON. Start with { end with }. Nothing else."}],SYS_PLAN,4000);
+            plan=parseJSON(raw);
+          }
+          if(!plan?.weeklySchedule?.length)throw new Error("bad");
+          const order=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+          order.forEach(day=>{if(!plan.weeklySchedule.find(d=>d.day===day))plan.weeklySchedule.push({day,focus:"Rest",exercises:[]});});
+          plan.weeklySchedule.sort((a,b)=>order.indexOf(a.day)-order.indexOf(b.day));
+          onDone(plan);
+        }catch(e){console.error(e);setErr("Couldn't generate plan. Tap Try Again.");setBuilding(false);}
+      };
+      const lastMsg=msgs[msgs.length-1];
+      const chips=(!loading&&!building&&!ready&&lastMsg?.role==="assistant"&&lastMsg?.chips?.length)?lastMsg.chips:[];
+      return(
+        <div style={{display:"flex",flexDirection:"column",height:"100%",background:BG}}>
+          <div style={{padding:"18px 18px 13px",borderBottom:`1px solid ${BORDER}`,flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+            <div>
+              <div style={{fontSize:10,letterSpacing:3,color:R,textTransform:"uppercase",marginBottom:3}}>Nova Fitness</div>
+              <div style={{fontSize:22,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:TXT}}>{isAdjust?"Adjust Your Plan":"Initial Consultation"}</div>
+              <div style={{fontSize:12,color:FAINT,marginTop:2}}>{isAdjust?"Let's fine-tune it":"Let's build your program"}</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {isAdjust&&onCancel&&<button onClick={onCancel} style={{fontSize:12,color:FAINT,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontFamily:"inherit"}}>← Back</button>}
+              <ResetBtn onReset={onReset}/>
+            </div>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"16px 16px 0"}}>
+            {isAdjust&&existingPlan&&<AdjustPlanSummary plan={existingPlan}/>}
+            {msgs.map((m,i)=><Bubble key={i} m={m}/>)}
+            {(loading||building)&&<Dots/>}
+            {building&&<div style={{textAlign:"center",fontSize:12,color:R,marginBottom:8}}>{isAdjust?"Updating your plan…":"Building your plan…"}</div>}
+            {err&&<div style={{margin:"6px 0 10px",padding:"11px 14px",background:"#CE20291A",border:`1px solid #CE202955`,borderRadius:12}}><div style={{fontSize:13,color:"#FF8080",marginBottom:8}}>{err}</div><button onClick={build} style={{padding:"7px 18px",borderRadius:9,background:R,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer"}}>Try Again</button></div>}
+            <div ref={ref} style={{height:6}}/>
+          </div>
+          <ChipRow chips={chips} onSend={send}/>
+          {ready&&!loading&&!building&&!err&&(
+            <div style={{margin:"10px 16px 0",padding:"13px 14px",background:"#CE202918",border:`1px solid #CE202955`,borderRadius:13}}>
+              <div style={{fontSize:13,color:"#FF8080",marginBottom:9}}>{isAdjust?"Ready to update your plan?":"Nova's ready to build your plan!"}</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={build} style={{flex:1,padding:"11px 0",borderRadius:10,background:R,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer"}}>{isAdjust?"Apply Changes →":"Build My Plan →"}</button>
+                <button onClick={()=>setReady(false)} style={{padding:"11px 14px",borderRadius:10,background:"transparent",border:`1px solid ${BORDER}`,color:FAINT,fontSize:13,cursor:"pointer"}}>Keep talking</button>
+              </div>
+            </div>
+          )}
+          <div style={{padding:"10px 16px 18px",borderTop:`1px solid ${BORDER}`,marginTop:10,flexShrink:0}}>
+            <div style={{display:"flex",gap:8}}>
+              <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder={building?"Building…":"Type your response…"} disabled={building} style={{flex:1,background:CARD,border:`1px solid ${BORDER}`,borderRadius:22,padding:"10px 16px",color:TXT,fontSize:14,outline:"none",fontFamily:"inherit",opacity:building?.5:1}}/>
+              <button onClick={()=>send()} disabled={!inp.trim()||loading||building} style={{width:44,height:44,borderRadius:"50%",background:inp.trim()&&!building?R:CARD,border:"none",cursor:inp.trim()&&!building?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .2s"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Plan Preview ─────────────────────────────────────────────────────────
+    function PlanPreview({plan,onBegin,onAdjust,onReset}){
+      const[open,setOpen]=useState(null);
+      return(
+        <div style={{height:"100%",overflowY:"auto",background:BG}}>
+          <div style={{padding:"18px 18px 13px",position:"sticky",top:0,background:BG,zIndex:5,borderBottom:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+            <div><div style={{fontSize:10,letterSpacing:3,color:R,textTransform:"uppercase",marginBottom:3}}>Nova Fitness</div><div style={{fontSize:24,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:TXT}}>YOUR PROGRAM</div></div>
+            <ResetBtn onReset={onReset}/>
+          </div>
+          <div style={{padding:"14px 16px 130px"}}>
+            <div style={{background:"#CE202918",border:`1px solid #CE202955`,borderRadius:13,padding:"13px 14px",marginBottom:14,display:"flex",gap:11}}>
+              <Av sz={34}/><div><div style={{fontSize:10,color:R,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Nova says</div><div style={{fontSize:13.5,color:TXT,lineHeight:1.65}}>{plan.coachNote}</div></div>
+            </div>
+            <div style={{background:CARD,borderRadius:13,padding:"13px 14px",marginBottom:14}}>
+              <div style={{fontSize:10,color:FAINT,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>Overview</div>
+              <div style={{fontSize:13.5,color:DIM,lineHeight:1.7}}>{plan.summary}</div>
+            </div>
+            <div style={{fontSize:10,color:FAINT,letterSpacing:2,textTransform:"uppercase",marginBottom:10}}>Weekly Schedule</div>
+            {plan.weeklySchedule?.map((day,i)=>{
+              const rest=!day.exercises?.length;const isOpen=open===i;
+              return <div key={i} style={{marginBottom:8,borderRadius:13,overflow:"hidden",border:`1px solid ${rest?DEEP:BORDER}`}}>
+                <button onClick={()=>!rest&&setOpen(isOpen?null:i)} style={{width:"100%",display:"flex",alignItems:"center",gap:11,padding:"12px 13px",background:rest?DEEP:CARD,border:"none",cursor:rest?"default":"pointer",textAlign:"left",fontFamily:"inherit"}}>
+                  <div style={{width:36,height:36,borderRadius:9,background:rest?"#2C2D35":"#CE202918",border:`1px solid ${rest?BORDER:"#CE202955"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:16}}>{rest?"💤":"🔥"}</div>
+                  <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,fontFamily:"'Barlow Condensed',sans-serif",color:rest?FAINT:TXT}}>{day.day}</div><div style={{fontSize:12,color:rest?BORDER:R,marginTop:1}}>{day.focus}</div></div>
+                  {!rest&&<span style={{fontSize:12,color:FAINT}}>{day.exercises.length} ex {isOpen?"▴":"▾"}</span>}
+                </button>
+                {isOpen&&<div style={{background:DEEP,borderTop:`1px solid ${BORDER}`}}>{day.exercises.map((ex,j)=><div key={j} style={{padding:"11px 13px",borderBottom:j<day.exercises.length-1?`1px solid ${BORDER}`:"none"}}><div style={{fontSize:14,fontWeight:600,color:TXT}}>{ex.name}</div><div style={{fontSize:12,color:R,marginTop:2}}>{ex.sets} sets × {ex.reps}</div>{ex.suggestedWeight&&<div style={{fontSize:11.5,color:FAINT,marginTop:4}}>💡 {ex.suggestedWeight}</div>}{ex.note&&<div style={{fontSize:11.5,color:FAINT,marginTop:2}}>📌 {ex.note}</div>}</div>)}</div>}
+              </div>;
+            })}
+          </div>
+          <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 22px",background:`linear-gradient(0deg,${BG} 65%,transparent)`,display:"flex",gap:10}}>
+            <button onClick={onAdjust} style={{flex:1,padding:"13px 0",borderRadius:13,background:"transparent",border:`1px solid ${BORDER}`,color:FAINT,fontSize:14,cursor:"pointer"}}>Make Adjustments</button>
+            <button onClick={onBegin} style={{flex:2,padding:"13px 0",borderRadius:13,background:R,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:`0 4px 20px #CE202944`}}>Begin Training →</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Workout Tracker ──────────────────────────────────────────────────────
+    function WorkoutTracker({day,log,setLog,xp,setXp,prs,setPrs,onFinish,onExit}){
+      const[weights,setWeights]=useState({});
+      const[confettiKey,setConfettiKey]=useState(0);
+      const[showConfetti,setShowConfetti]=useState(false);
+      const[prBanner,setPrBanner]=useState(null);
+      const dk=dateKey();
+      const setW=(ex,s,val)=>setWeights(p=>({...p,[lk(ex,s,dk)]:val}));
+      const getW=(ex,s)=>weights[lk(ex,s,dk)]!==undefined?weights[lk(ex,s,dk)]:(log[lk(ex,s,dk)]?.weight||"");
+      const isDone=(ex,s)=>!!log[lk(ex,s,dk)]?.done;
+      const bestEver=ex=>{const id=exId(ex);const ws=Object.entries(log).filter(([k,v])=>k.startsWith(id+"__")&&v.done&&v.weight).map(([,v])=>parseFloat(v.weight)).filter(n=>!isNaN(n));return ws.length?Math.max(...ws):null;};
+      const toggleSet=(ex,s)=>{
+        const k=lk(ex,s,dk);const w=getW(ex,s);const wasDone=isDone(ex,s);
+        if(wasDone){setLog(p=>{const n={...p};delete n[k];return n;});return;}
+        const best=bestEver(ex);const wNum=parseFloat(w)||0;const isPR=wNum>0&&(best===null||wNum>best);
+        setLog(p=>({...p,[k]:{done:true,weight:w,date:dk}}));
+        setXp(p=>p+XP.SET+(isPR?XP.PR:0));
+        if(isPR){setPrs(p=>({...p,[exId(ex)]:wNum}));setPrBanner(ex.name);setConfettiKey(k=>k+1);setShowConfetti(true);setTimeout(()=>setShowConfetti(false),3000);}
+        else{setConfettiKey(k=>k+1);setShowConfetti(true);setTimeout(()=>setShowConfetti(false),1800);}
+      };
+      const total=day.exercises.reduce((a,e)=>a+e.sets,0);
+      const done=day.exercises.reduce((a,ex)=>a+Array.from({length:ex.sets},(_,s)=>isDone(ex,s)?1:0).reduce((x,y)=>x+y,0),0);
+      const pct=total?~~(done/total*100):0;
+      return(
+        <div style={{position:"fixed",inset:0,background:BG,display:"flex",flexDirection:"column",zIndex:100,maxWidth:480,margin:"0 auto"}}>
+          <Confetti go={showConfetti} key={confettiKey}/>
+          <div style={{padding:"14px 18px 10px",borderBottom:`1px solid ${BORDER}`,flexShrink:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div>
+                <div style={{fontSize:10,letterSpacing:3,color:R,textTransform:"uppercase"}}>Active Workout</div>
+                <div style={{fontSize:18,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:TXT}}>{day.focus}</div>
+              </div>
+              <button onClick={onExit} style={{fontSize:12,color:FAINT,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>Exit</button>
+            </div>
+            <div style={{height:4,background:BORDER,borderRadius:4,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${pct}%`,background:pct===100?`linear-gradient(90deg,${GREEN},#22C55E)`:`linear-gradient(90deg,${R},#E8525A)`,borderRadius:4,transition:"width .4s"}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+              <span style={{fontSize:11,color:FAINT}}>{done}/{total} sets</span>
+              <span style={{fontSize:11,fontWeight:700,color:pct===100?GREEN:R}}>{pct}%</span>
+            </div>
+            {prBanner&&<div style={{marginTop:8,padding:"7px 12px",background:"#FBBF2418",border:`1px solid ${GOLD}55`,borderRadius:10,display:"flex",alignItems:"center",gap:8,animation:"fadeUp .3s ease"}}>
+              <span style={{fontSize:16}}>🏆</span><span style={{fontSize:12,fontWeight:700,color:GOLD}}>PR: {prBanner}!</span>
+              <button onClick={()=>setPrBanner(null)} style={{marginLeft:"auto",fontSize:11,color:FAINT,background:"none",border:"none",cursor:"pointer"}}>✕</button>
+            </div>}
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"12px 16px 24px"}}>
+            {day.exercises.map((ex,ei)=>{
+              const best=bestEver(ex);
+              const allDone=Array.from({length:ex.sets},(_,s)=>isDone(ex,s)).every(Boolean);
+              const isLifting=!!(ex.suggestedWeight&&ex.suggestedWeight.trim()&&ex.suggestedWeight!=="");
+              return(
+                <div key={ei} style={{background:allDone?`${GREEN}0A`:CARD,border:`1px solid ${allDone?GREEN+"33":BORDER}`,borderRadius:14,padding:"13px 14px",marginBottom:10,transition:"all .3s"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                    <div>
+                      <div style={{fontSize:15,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",color:allDone?GREEN:TXT}}>{ex.name} {allDone&&"✓"}</div>
+                      <div style={{fontSize:12,color:R,marginTop:1}}>{ex.sets>1?`${ex.sets} × `:""}{ex.reps}</div>
+                    </div>
+                    {isLifting&&best!==null&&<div style={{textAlign:"right"}}><div style={{fontSize:9,color:FAINT,textTransform:"uppercase",letterSpacing:1}}>Best</div><div style={{fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:GREEN}}>{best} lbs</div></div>}
+                  </div>
+                  {ex.suggestedWeight&&isLifting&&<div style={{fontSize:11.5,color:FAINT,background:DEEP,borderRadius:8,padding:"6px 10px",marginBottom:8}}>💡 {ex.suggestedWeight}</div>}
+                  {ex.note&&<div style={{fontSize:11.5,color:FAINT,marginBottom:8}}>📌 {ex.note}</div>}
+                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                    {Array.from({length:ex.sets},(_,s)=>{
+                      const done=isDone(ex,s);const w=getW(ex,s);
+                      const setLabel=ex.sets===1?"Complete":`Set ${s+1}`;
+                      return(
+                        <div key={s} style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <span style={{fontSize:12,color:FAINT,width:44,flexShrink:0}}>{setLabel}</span>
+                          {isLifting&&<input type="number" placeholder="lbs" value={w} onChange={e=>setW(ex,s,e.target.value)}
+                            style={{width:68,background:done?`${GREEN}18`:DEEP,border:`1px solid ${done?GREEN+"55":BORDER}`,borderRadius:9,padding:"7px 10px",color:TXT,fontSize:14,outline:"none",fontFamily:"inherit",transition:"all .2s"}}/>}
+                          <button onClick={()=>toggleSet(ex,s)}
+                            style={{flex:1,padding:"8px 0",borderRadius:9,border:`1.5px solid ${done?GREEN:BORDER}`,background:done?`${GREEN}18`:"transparent",color:done?GREEN:FAINT,fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:done?700:400,transition:"all .18s"}}>
+                            {done?"✓ Done":"Mark Done"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {pct===100&&(
+              <button onClick={()=>{setXp(p=>p+XP.WORKOUT);onFinish();}}
+                style={{width:"100%",padding:"16px 0",borderRadius:14,background:`linear-gradient(135deg,${GREEN},#22C55E)`,color:"#0F1014",border:"none",fontSize:17,fontWeight:800,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,boxShadow:`0 4px 24px ${GREEN}44`,marginTop:4}}>
+                🎉 Finish Workout (+{XP.WORKOUT} XP)
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Dashboard Tab ────────────────────────────────────────────────────────
+    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,onBeginWorkout,onChatFocus,today}){
+      const[bwInp,setBwInp]=useState("");
+      const todayPlan=plan.weeklySchedule?.find(d=>d.day===today);
+      const isRest=!todayPlan?.exercises?.length;
+      const dk=dateKey();
+      const streak=(()=>{let s=0;const d=new Date();for(let i=0;i<60;i++){const k=d.toISOString().slice(0,10);const worked=Object.keys(log).some(l=>l.includes(`__${k}__`)&&log[l].done);if(worked)s++;else if(i>0)break;d.setDate(d.getDate()-1);}return s;})();
+      const weekStart=new Date();weekStart.setDate(weekStart.getDate()-weekStart.getDay());
+      const workoutDays=plan.weeklySchedule?.filter(d=>d.exercises?.length>0)||[];
+      const doneThisWeek=workoutDays.filter(d=>{const di=DAYS.indexOf(d.day);const dd=new Date(weekStart);dd.setDate(weekStart.getDate()+di);const k=dd.toISOString().slice(0,10);return Object.keys(log).some(l=>l.includes(`__${k}__`)&&log[l].done);}).length;
+      const weekPct=workoutDays.length?doneThisWeek/workoutDays.length:0;
+      const lastWorkout=(()=>{const dates=[...new Set(Object.keys(log).map(k=>k.split("__")[1]))].sort().reverse();for(const dt of dates){if(dt===dk)continue;const d=new Date(dt);const dayN=DAYS[d.getDay()];const dp=plan.weeklySchedule?.find(p=>p.day===dayN);if(dp?.exercises?.length)return{date:dt,day:dayN,focus:dp.focus};}return null;})();
+      const total=todayPlan?.exercises?.reduce((a,ex)=>a+ex.sets,0)||0;
+      const done=todayPlan?.exercises?.reduce((a,ex)=>a+Array.from({length:ex.sets},(_,s)=>log[lk(ex,s,dk)]?.done?1:0).reduce((x,y)=>x+y,0),0)||0;
+      const level=Math.floor(xp/500)+1;const levelXp=xp%500;const levelPct=levelXp/500*100;
+      const tomorrowIdx=(DAYS.indexOf(today)+1)%7;const tomorrowName=DAYS[tomorrowIdx];
+      const tomorrowPlan=plan.weeklySchedule?.find(d=>d.day===tomorrowName);
+      const logBW=()=>{const v=parseFloat(bwInp);if(isNaN(v)||v<=0)return;const isNew=!bwLog[dk];setBwLog(p=>({...p,[dk]:v}));if(isNew)setXp(p=>p+XP.BODYWEIGHT);setBwInp("");};
+      return(
+        <div style={{animation:"fadeUp .22s ease"}}>
+          <div style={{background:CARD,borderRadius:13,padding:"13px 16px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${GOLD},#F59E0B)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>⚡</div>
+                <div><div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5}}>Level {level}</div><div style={{fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:GOLD}}>{xp.toLocaleString()} XP</div></div>
+              </div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:FAINT}}>next level</div><div style={{fontSize:13,color:DIM}}>{500-levelXp} XP away</div></div>
+            </div>
+            <div style={{height:5,background:DEEP,borderRadius:5,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${levelPct}%`,background:`linear-gradient(90deg,${GOLD},#F59E0B)`,borderRadius:5,transition:"width .6s ease"}}/>
+            </div>
+            <div style={{fontSize:10,color:FAINT,marginTop:5,lineHeight:1.6}}>+{XP.SET} XP/set · +{XP.WORKOUT} finish workout · +{XP.PR} PR · +{XP.BODYWEIGHT} log weight · +{XP.NUTRITION_DAY} log macros</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+            <div style={{background:CARD,borderRadius:12,padding:"12px 10px",textAlign:"center"}}>
+              <div style={{fontSize:22}}>{streak>0?"🔥":"💤"}</div>
+              <div style={{fontSize:24,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:streak>0?R:FAINT,lineHeight:1}}>{streak}</div>
+              <div style={{fontSize:10,color:FAINT,marginTop:2}}>day streak</div>
+            </div>
+            <div style={{background:CARD,borderRadius:12,padding:"12px 10px",textAlign:"center"}}>
+              <div style={{position:"relative",width:46,height:46,margin:"0 auto 2px"}}>
+                <svg width="46" height="46" style={{transform:"rotate(-90deg)"}}>
+                  <circle cx="23" cy="23" r="18" fill="none" stroke={BORDER} strokeWidth="4"/>
+                  <circle cx="23" cy="23" r="18" fill="none" stroke={GREEN} strokeWidth="4" strokeDasharray={2*Math.PI*18} strokeDashoffset={2*Math.PI*18*(1-weekPct)} strokeLinecap="round" style={{transition:"stroke-dashoffset .6s ease"}}/>
+                </svg>
+                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:GREEN}}>{doneThisWeek}/{workoutDays.length}</div>
+              </div>
+              <div style={{fontSize:10,color:FAINT}}>this week</div>
+            </div>
+            <div style={{background:CARD,borderRadius:12,padding:"12px 10px",textAlign:"center"}}>
+              <div style={{fontSize:20,marginBottom:2}}>📅</div>
+              <div style={{fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,color:TXT,lineHeight:1.2}}>{lastWorkout?.day||"—"}</div>
+              <div style={{fontSize:10,color:FAINT,marginTop:2,lineHeight:1.3}}>{lastWorkout?.focus?.split("—")[0]?.trim()||"No log yet"}</div>
+            </div>
+          </div>
+          <div style={{background:isRest?DEEP:CARD,border:`1px solid ${isRest?BORDER:"#CE202933"}`,borderRadius:13,padding:"14px 16px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:isRest?0:10}}>
+              <div>
+                <div style={{fontSize:11,color:FAINT,marginBottom:2}}>Today · {today}</div>
+                <div style={{fontSize:17,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:isRest?FAINT:TXT}}>{todayPlan?.focus||"Rest Day"}</div>
+              </div>
+              {isRest?<span style={{fontSize:28}}>💤</span>:<span style={{fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,color:done>0&&done===total?GREEN:R}}>{done}/{total} sets</span>}
+            </div>
+            {!isRest&&<>
+              <div style={{height:4,background:DEEP,borderRadius:4,overflow:"hidden",marginBottom:10}}>
+                <div style={{height:"100%",width:`${total?~~(done/total*100):0}%`,background:done===total?`linear-gradient(90deg,${GREEN},#22C55E)`:`linear-gradient(90deg,${R},#E8525A)`,borderRadius:4,transition:"width .4s"}}/>
+              </div>
+              <button onClick={onBeginWorkout} style={{width:"100%",padding:"12px 0",borderRadius:11,background:done===total?`${GREEN}22`:R,border:done===total?`1px solid ${GREEN}55`:"none",color:done===total?GREEN:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.3}}>
+                {done===total?"Workout Complete ✓":done>0?"Resume Workout →":"Begin Today's Workout →"}
+              </button>
+            </>}
+          </div>
+          <button onClick={onChatFocus} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#CE202912",border:`1px solid #CE202933`,borderRadius:13,cursor:"pointer",marginBottom:10,textAlign:"left"}}>
+            <Av sz={32}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:TXT}}>Ask Nova anything</div><div style={{fontSize:11,color:FAINT,marginTop:1}}>Tips, form, motivation…</div></div>
+            <span style={{fontSize:16,color:R}}>→</span>
+          </button>
+          <div style={{background:CARD,borderRadius:13,padding:"13px 16px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5}}>⚖️ Bodyweight Log</div>
+              <div style={{fontSize:10,color:GOLD}}>+{XP.BODYWEIGHT} XP/day</div>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              <input type="number" value={bwInp} onChange={e=>setBwInp(e.target.value)} placeholder="lbs" style={{flex:1,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,padding:"9px 12px",color:TXT,fontSize:15,outline:"none",fontFamily:"inherit"}} onKeyDown={e=>e.key==="Enter"&&logBW()}/>
+              <button onClick={logBW} style={{padding:"9px 18px",borderRadius:9,background:R,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer"}}>{bwLog[dk]?"Update":"Log"}</button>
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {Object.entries(bwLog).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,7).map(([dt,w])=><div key={dt} style={{background:DEEP,borderRadius:7,padding:"4px 10px",fontSize:12}}><span style={{color:TXT,fontWeight:600}}>{w} lbs</span><span style={{color:FAINT,marginLeft:5}}>{dt.slice(5)}</span></div>)}
+              {Object.keys(bwLog).length===0&&<span style={{fontSize:12,color:FAINT}}>No entries yet</span>}
+            </div>
+          </div>
+          {tomorrowPlan&&<div style={{background:DEEP,border:`1px solid ${BORDER}`,borderRadius:13,padding:"12px 14px"}}>
+            <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5,marginBottom:5}}>Tomorrow · {tomorrowName}</div>
+            <div style={{fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,color:tomorrowPlan.exercises?.length?DIM:FAINT}}>{tomorrowPlan.focus}</div>
+            {tomorrowPlan.exercises?.length>0&&<div style={{fontSize:11,color:FAINT,marginTop:3}}>{tomorrowPlan.exercises.length} exercises</div>}
+          </div>}
+        </div>
+      );
+    }
+
+    // ─── Workouts Tab ─────────────────────────────────────────────────────────
+    function WorkoutsTab({plan,log,prs,today,onBeginWorkout}){
+      const[open,setOpen]=useState(null);
+      const dk=dateKey();
+      const bestEver=ex=>{const id=exId(ex);const ws=Object.entries(log).filter(([k,v])=>k.startsWith(id+"__")&&v.done&&v.weight).map(([,v])=>parseFloat(v.weight)).filter(n=>!isNaN(n));return ws.length?Math.max(...ws):null;};
+      return(
+        <div style={{animation:"fadeUp .22s ease"}}>
+          {plan.weeklySchedule?.map((day,i)=>{
+            const rest=!day.exercises?.length;const isToday=day.day===today;const isOpen=open===i;
+            const todayDone=isToday?day.exercises?.reduce((a,ex)=>a+Array.from({length:ex.sets},(_,s)=>log[lk(ex,s,dk)]?.done?1:0).reduce((x,y)=>x+y,0),0)||0:0;
+            const todayTotal=isToday?day.exercises?.reduce((a,ex)=>a+ex.sets,0)||0:0;
+            return(
+              <div key={i} style={{marginBottom:8,borderRadius:13,overflow:"hidden",border:`1px solid ${isToday?"#CE202955":rest?DEEP:BORDER}`,background:isToday?"#CE202909":rest?DEEP:CARD}}>
+                <button onClick={()=>!rest&&setOpen(isOpen?null:i)} style={{width:"100%",display:"flex",alignItems:"center",gap:11,padding:"12px 13px",background:"transparent",border:"none",cursor:rest?"default":"pointer",textAlign:"left",fontFamily:"inherit"}}>
+                  <div style={{width:38,height:38,borderRadius:9,background:rest?"#2C2D35":isToday?"#CE202922":"#1E1F27",border:`1px solid ${rest?BORDER:isToday?"#CE202966":BORDER}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>{rest?"💤":isToday?"⚡":"🔥"}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",color:rest?FAINT:isToday?R:TXT}}>{day.day}{isToday&&<span style={{fontSize:10,color:R,marginLeft:6,fontWeight:400}}>Today</span>}</div>
+                    <div style={{fontSize:12,color:rest?FAINT:DIM,marginTop:1}}>{day.focus}</div>
+                  </div>
+                  {isToday&&!rest&&<div style={{textAlign:"right",marginRight:4}}><div style={{fontSize:12,color:todayDone===todayTotal&&todayTotal>0?GREEN:R,fontWeight:700}}>{todayDone}/{todayTotal}</div><div style={{fontSize:10,color:FAINT}}>sets</div></div>}
+                  {!rest&&<span style={{fontSize:12,color:FAINT,marginLeft:4}}>{isOpen?"▴":"▾"}</span>}
+                </button>
+                {isOpen&&(
+                  <div style={{background:DEEP,borderTop:`1px solid ${BORDER}`}}>
+                    <div style={{padding:"10px 13px",borderBottom:`1px solid ${BORDER}`}}>
+                      <button onClick={()=>onBeginWorkout(day)} style={{width:"100%",padding:"11px 0",borderRadius:10,background:R,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                        {isToday?(todayDone>0?"Resume Workout →":"Begin Today's Workout →"):`Begin ${day.day}'s Workout →`}
+                      </button>
+                    </div>
+                    {day.exercises.map((ex,j)=>{
+                      const b=bestEver(ex);const isPR=b!==null&&prs[exId(ex)]===b;
+                      return(
+                        <div key={j} style={{padding:"11px 13px",borderBottom:j<day.exercises.length-1?`1px solid ${BORDER}`:"none"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                            <div style={{fontSize:14,fontWeight:600,color:TXT}}>{ex.name}</div>
+                            {b!==null&&<div style={{display:"flex",alignItems:"center",gap:5}}>{isPR&&<span style={{fontSize:13}}>🏆</span>}<span style={{fontSize:14,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:GREEN}}>{b} lbs</span></div>}
+                          </div>
+                          <div style={{fontSize:12,color:R,marginTop:2}}>{ex.sets} sets × {ex.reps}</div>
+                          {ex.suggestedWeight&&<div style={{fontSize:11.5,color:FAINT,marginTop:3}}>💡 {ex.suggestedWeight}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ─── Nutrition Tab ────────────────────────────────────────────────────────
+    function NutritionTab({plan,nutLog,setNutLog,xp,setXp}){
+      const targets=plan.nutrition;const dk=dateKey();
+      const today=nutLog[dk]||{calories:"",protein:"",carbs:"",fat:""};
+      const awardedRef=useRef(false);
+      const set=(field,val)=>{
+        const updated={...today,[field]:val};
+        setNutLog(p=>({...p,[dk]:updated}));
+        const all=["calories","protein","carbs","fat"].every(f=>f===field?val:updated[f]);
+        if(all&&!awardedRef.current&&!nutLog[dk+"_xp"]){
+          awardedRef.current=true;setXp(p=>p+XP.NUTRITION_DAY);
+          setNutLog(p=>({...p,[dk+"_xp"]:true}));
+        }
+      };
+      const fields=[
+        {key:"calories",label:"Calories",unit:"kcal",color:R,target:targets?.calories},
+        {key:"protein",label:"Protein",unit:"g",color:GREEN,target:targets?.protein},
+        {key:"carbs",label:"Carbs",unit:"g",color:BLUE,target:targets?.carbs},
+        {key:"fat",label:"Fat",unit:"g",color:PURPLE,target:targets?.fat},
+      ];
+      const pct=(val,target)=>{const t=parseFloat(target);const v=parseFloat(val);return t&&v?Math.min(100,~~(v/t*100)):0;};
+      return(
+        <div style={{animation:"fadeUp .22s ease"}}>
+          <div style={{background:"#CE202912",border:`1px solid #CE202933`,borderRadius:13,padding:"12px 14px",marginBottom:12,display:"flex",gap:10,alignItems:"center"}}>
+            <Av sz={28}/><div style={{flex:1,fontSize:13,color:DIM,lineHeight:1.6}}>{targets?.notes||"Stay consistent."}</div>
+            <div style={{fontSize:10,color:GOLD,textAlign:"right",flexShrink:0}}>+{XP.NUTRITION_DAY} XP<br/>when full</div>
+          </div>
+          <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5,marginBottom:10}}>Today's Log</div>
+          {fields.map(f=>{
+            const p=pct(today[f.key],f.target);
+            return(
+              <div key={f.key} style={{background:CARD,borderRadius:13,padding:"13px 14px",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                  <div><div style={{fontSize:14,fontWeight:600,color:TXT}}>{f.label}</div><div style={{fontSize:11,color:FAINT}}>Target: {f.target} {f.unit}</div></div>
+                  <div style={{fontSize:22,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:p>=100?GREEN:f.color}}>{p}%</div>
+                </div>
+                <div style={{height:4,background:DEEP,borderRadius:4,overflow:"hidden",marginBottom:8}}>
+                  <div style={{height:"100%",width:`${p}%`,background:p>=100?GREEN:f.color,borderRadius:4,transition:"width .4s"}}/>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <input type="number" value={today[f.key]||""} onChange={e=>set(f.key,e.target.value)} placeholder={`Enter ${f.label.toLowerCase()}…`} style={{flex:1,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,padding:"8px 12px",color:TXT,fontSize:14,outline:"none",fontFamily:"inherit"}}/>
+                  <div style={{padding:"8px 12px",background:DEEP,borderRadius:9,fontSize:13,color:FAINT,display:"flex",alignItems:"center"}}>{f.unit}</div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5,margin:"14px 0 8px"}}>Recent Days</div>
+          {Object.entries(nutLog).filter(([k])=>!k.endsWith("_xp")).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,5).map(([dt,entry])=>(
+            <div key={dt} style={{background:DEEP,borderRadius:10,padding:"10px 12px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:12,color:DIM}}>{dt.slice(5)}</span>
+              <div style={{display:"flex",gap:12}}>
+                {fields.map(f=><div key={f.key} style={{textAlign:"center"}}><div style={{fontSize:12,fontWeight:700,color:f.color}}>{entry[f.key]||"—"}</div><div style={{fontSize:9,color:FAINT}}>{f.key==="calories"?"kcal":"g"}</div></div>)}
+              </div>
+            </div>
+          ))}
+          {Object.keys(nutLog).filter(k=>!k.endsWith("_xp")).length===0&&<div style={{fontSize:12,color:FAINT,textAlign:"center",padding:"16px 0"}}>Start logging today's nutrition above</div>}
+        </div>
+      );
+    }
+
+    // ─── Nova Chat Tab ────────────────────────────────────────────────────────
+    function NovaTab({plan,log,chatMsgs,setChatMsgs,inputRef}){
+      const[chatInp,setChatInp]=useState("");
+      const[chatBusy,setChatBusy]=useState(false);
+      const endRef=useRef(null);const today=todayName();
+      const chat=chatMsgs||[{role:"assistant",content:"Plan's locked in. Let's get to work — hit me up anytime you have questions or need a push. What's up?"}];
+      useEffect(()=>{setTimeout(()=>endRef.current?.scrollIntoView({behavior:"smooth"}),50);},[chat,chatBusy]);
+      const sendChat=async()=>{
+        const t=chatInp.trim();if(!t||chatBusy)return;
+        setChatInp("");const nm=[...chat,{role:"user",content:t}];setChatMsgs(nm);setChatBusy(true);
+        try{
+          const ls=Object.entries(log).slice(-30).map(([k,v])=>`${k.split("__")[0]} ${v.weight?v.weight+"lbs":""} ${v.done?"✓":"✗"}`).join(", ");
+          const rep=await ask(nm.slice(-14).map(m=>({role:m.role,content:m.content})),SYS_COACH(plan,today,ls),500);
+          setChatMsgs([...nm,{role:"assistant",content:rep}]);
+        }catch{setChatMsgs([...nm,{role:"assistant",content:"Connection issue — try again."}]);}
+        setChatBusy(false);
+      };
+      return(
+        <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,animation:"fadeUp .22s ease"}}>
+          <div style={{flex:1,overflowY:"auto"}}>
+            {chat.map((m,i)=><Bubble key={i} m={m}/>)}
+            {chatBusy&&<Dots/>}
+            <div ref={endRef} style={{height:8}}/>
+          </div>
+          <div style={{flexShrink:0,paddingTop:10,borderTop:`1px solid ${BORDER}`,marginTop:10}}>
+            <div style={{display:"flex",gap:8}}>
+              <input ref={inputRef} value={chatInp} onChange={e=>setChatInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendChat()} placeholder="Ask Nova anything…" style={{flex:1,background:CARD,border:`1px solid ${BORDER}`,borderRadius:22,padding:"10px 16px",color:TXT,fontSize:14,outline:"none",fontFamily:"inherit"}}/>
+              <button onClick={sendChat} disabled={!chatInp.trim()||chatBusy} style={{width:44,height:44,borderRadius:"50%",background:chatInp.trim()?R:CARD,border:"none",cursor:chatInp.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Dashboard Shell ──────────────────────────────────────────────────────
+    function Dashboard({plan,setPlan,onReset,onAdjust}){
+      const[tab,setTab]=useState("dashboard");
+      const[log,setLog]=useLS("nv6_log",{});
+      const[xp,setXp]=useLS("nv6_xp",0);
+      const[prs,setPrs]=useLS("nv6_prs",{});
+      const[bwLog,setBwLog]=useLS("nv6_bw",{});
+      const[nutLog,setNutLog]=useLS("nv6_nut",{});
+      const[chatMsgs,setChatMsgs]=useLS("nv6_chat",null);
+      const[activeWorkoutDay,setActiveWorkoutDay]=useState(null);
+      const[confetti,setConfetti]=useState(false);
+      const chatInputRef=useRef(null);
+      const today=todayName();
+      const todayPlan=plan.weeklySchedule?.find(d=>d.day===today);
+
+      useEffect(()=>{
+        const sessionKey="nv6_session_"+dateKey();
+        if(localStorage.getItem(sessionKey))return;
+        localStorage.setItem(sessionKey,"1");
+        const allDates=[...new Set(Object.keys(log).map(k=>k.split("__")[1]).filter(Boolean))].sort();
+        if(!allDates.length)return;
+        const lastDate=allDates[allDates.length-1];
+        const dk=dateKey();
+        if(lastDate===dk)return;
+        const msGap=new Date(dk)-new Date(lastDate);
+        const daysMissed=Math.round(msGap/(1000*60*60*24));
+        if(daysMissed<2)return;
+        const lastDayName=DAYS[new Date(lastDate).getDay()];
+        setTimeout(async()=>{
+          try{
+            const msg=await ask([{role:"user",content:"Send the re-engagement message now."}],SYS_REENGAGE(plan,daysMissed,lastDayName,today),200);
+            setChatMsgs(prev=>{
+              const base=prev||[{role:"assistant",content:"Plan's locked in. Let's get to work — hit me up anytime. What's up?"}];
+              return[...base,{role:"assistant",content:msg}];
+            });
+          }catch{}
+        },800);
+      },[]);
+
+      const handleBeginWorkout=day=>setActiveWorkoutDay(day||todayPlan);
+      const handleFinishWorkout=async()=>{
+        setActiveWorkoutDay(null);setConfetti(true);setTimeout(()=>setConfetti(false),3500);
+        const dk=dateKey();
+        const completedSets=Object.keys(log).filter(k=>k.includes(`__${dk}__`)&&log[k].done).length;
+        const newPRs=Object.entries(prs).map(([name,w])=>`${name}: ${w}lbs`);
+        try{
+          const msg=await ask([{role:"user",content:"Send the post-workout message now."}],SYS_POST_WORKOUT(plan,today,completedSets,newPRs),200);
+          const curr=chatMsgs||[{role:"assistant",content:"Plan's locked in. Let's get to work!"}];
+          setChatMsgs([...curr,{role:"assistant",content:msg}]);
+        }catch{}
+        setTab("dashboard");
+      };
+
+      const TABS=[
+        {id:"dashboard",icon:"🏠",label:"Home"},
+        {id:"workouts",icon:"💪",label:"Workouts"},
+        ...(plan.includeNutrition&&plan.nutrition?[{id:"nutrition",icon:"🥗",label:"Nutrition"}]:[]),
+        {id:"chat",icon:"💬",label:"Nova"},
+      ];
+
+      return(
+        <div style={{display:"flex",flexDirection:"column",height:"100%",background:BG}}>
+          <Confetti go={confetti}/>
+          {activeWorkoutDay&&<WorkoutTracker day={activeWorkoutDay} log={log} setLog={setLog} xp={xp} setXp={setXp} prs={prs} setPrs={setPrs} onFinish={handleFinishWorkout} onExit={()=>setActiveWorkoutDay(null)}/>}
+          <div style={{padding:"14px 18px 0",flexShrink:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:10,letterSpacing:3,color:R,textTransform:"uppercase"}}>Nova Fitness</div>
+                <div style={{fontSize:20,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:TXT}}>{today.toUpperCase()}</div>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={onAdjust} style={{fontSize:11,fontWeight:600,color:R,background:"#CE202918",border:`1px solid #CE202955`,borderRadius:8,padding:"5px 11px",cursor:"pointer"}}>Adjust Plan</button>
+                <ResetBtn onReset={onReset}/>
+              </div>
+            </div>
+          </div>
+          <TabBar tabs={TABS} active={tab} onChange={t=>{setTab(t);if(t==="chat")setTimeout(()=>chatInputRef.current?.focus(),100);}}/>
+          <div style={{flex:1,overflowY:tab==="chat"?"hidden":"auto",padding:tab==="chat"?"11px 16px 0":"11px 16px 20px",display:"flex",flexDirection:"column",minHeight:0}}>
+            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
+            {tab==="workouts"&&<WorkoutsTab plan={plan} log={log} prs={prs} today={today} onBeginWorkout={handleBeginWorkout}/>}
+            {tab==="nutrition"&&plan.includeNutrition&&plan.nutrition&&<NutritionTab plan={plan} nutLog={nutLog} setNutLog={setNutLog} xp={xp} setXp={setXp}/>}
+            {tab==="chat"&&<NovaTab plan={plan} log={log} chatMsgs={chatMsgs} setChatMsgs={setChatMsgs} inputRef={chatInputRef}/>}
+          </div>
+        </div>
+      );
+    }
+
+    function App(){
+      const[phase,setPhase]=useLS("nv6_phase","onboarding");
+      const[plan,setPlan]=useLS("nv6_plan",null);
+      const[resetKey,setResetKey]=useState(0);
+      const reset=()=>{nukeAll();setPlan(null);setPhase("onboarding");setResetKey(k=>k+1);};
+      return(
+        <div style={{background:BG,height:"100vh",color:TXT,fontFamily:"'DM Sans',sans-serif",overflow:"hidden"}}>
+          <div style={{maxWidth:480,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            {phase==="onboarding"&&<Chat key={resetKey} onDone={p=>{setPlan(p);setPhase("plan");}} onReset={reset}/>}
+            {phase==="adjust"&&plan&&<Chat isAdjust existingPlan={plan} onDone={p=>{setPlan(p);setPhase("plan");}} onCancel={()=>setPhase("dashboard")} onReset={reset}/>}
+            {phase==="plan"&&plan&&<PlanPreview plan={plan} onBegin={()=>setPhase("dashboard")} onAdjust={()=>setPhase("adjust")} onReset={reset}/>}
+            {phase==="dashboard"&&plan&&<Dashboard plan={plan} setPlan={setPlan} onReset={reset} onAdjust={()=>setPhase("adjust")}/>}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App/>);
+  </script>
+</body>
+</html>
