@@ -174,7 +174,7 @@
           hist.current=[...h,{role:"assistant",content}];
           setMsgs(prev=>[...prev,{role:"assistant",content,chips:isReady?[]:chips}]);
           if(isReady)setReady(true);
-        }catch{setMsgs(prev=>[...prev,{role:"assistant",content:"Lost signal — try again.",chips:[]}]);}
+        }catch(e){setMsgs(prev=>[...prev,{role:"assistant",content:`Error: ${e.message}`,chips:[]}]);}
         setLoading(false);
       };
       const build=async()=>{

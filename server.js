@@ -10,7 +10,9 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 app.post("/api/chat", (req, res) => {
+  console.log("API_KEY set:", !!API_KEY);
   if (!API_KEY) {
+    console.error("No API key found in environment.");
     return res.status(500).json({ error: { message: "API key not configured on server." } });
   }
 
@@ -33,6 +35,8 @@ app.post("/api/chat", (req, res) => {
     let data = "";
     apiRes.on("data", (chunk) => (data += chunk));
     apiRes.on("end", () => {
+      console.log("Anthropic response status:", apiRes.statusCode);
+      console.log("Anthropic response body:", data.slice(0, 300));
       try { res.json(JSON.parse(data)); }
       catch { res.send(data); }
     });
