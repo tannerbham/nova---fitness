@@ -41,7 +41,7 @@
     }
     function nukeAll(){try{Object.keys(localStorage).filter(k=>k.startsWith("nv6")&&k!=="nv6_apikey").forEach(k=>localStorage.removeItem(k));}catch{}}
     async function ask(messages,system,max_tokens=500){
-      const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-3-5-sonnet-latest",max_tokens,system,messages})});
+      const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens,system,messages})});
       const d=await r.json();if(d.error)throw new Error(d.error.message);
       return d.content?.map(b=>b.text||"").join("")||"";
     }
