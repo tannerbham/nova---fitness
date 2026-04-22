@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.ANTHROPIC_API_KEY || "";
 
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 app.use(express.static(path.join(__dirname)));
 
 app.post("/api/chat", (req, res) => {

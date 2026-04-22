@@ -53,6 +53,28 @@
       if(a>=0&&b>a)return JSON.parse(s.slice(a,b+1));
       throw new Error("no JSON");
     }
+    // Vision API — send an image + text to Claude
+    async function askVision(b64,mediaType,prompt,max_tokens=500){
+      const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mediaType,data:b64}},{type:"text",text:prompt}]}]})});
+      const d=await r.json();if(d.error)throw new Error(d.error.message);
+      return d.content?.map(b=>b.text||"").join("")||"";
+    }
+    // Compress an image File to a base64 data-URL (max edge=maxPx, JPEG quality q)
+    function resizeImg(file,maxPx=800,q=0.75){
+      return new Promise(resolve=>{
+        const reader=new FileReader();
+        reader.onload=ev=>{
+          const img=new Image();
+          img.onload=()=>{
+            let{width:w,height:h}=img;
+            if(w>h){if(w>maxPx){h=~~(h*maxPx/w);w=maxPx;}}else{if(h>maxPx){w=~~(w*maxPx/h);h=maxPx;}}
+            const c=document.createElement("canvas");c.width=w;c.height=h;
+            c.getContext("2d").drawImage(img,0,0,w,h);
+            resolve(c.toDataURL("image/jpeg",q));
+          };img.src=ev.target.result;
+        };reader.readAsDataURL(file);
+      });
+    }
     const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const todayName=()=>DAYS[new Date().getDay()];
     const dateKey=()=>new Date().toISOString().slice(0,10);
@@ -530,6 +552,7 @@
       const WATER_GOAL=120;
       const dk=dateKey();
       const[foodItems,setFoodItems]=useLS("nv6_fitems",{});
+      const[favFoods,setFavFoods]=useLS("nv6_favfoods",[]);
       const items=foodItems[dk]||[];
       const awardedRef=useRef(false);
 
@@ -549,6 +572,14 @@
         }
       };
 
+      // ── Favorites helpers ──
+      const isFav=item=>favFoods.some(f=>f.name===item.name);
+      const toggleFav=item=>{
+        if(isFav(item))setFavFoods(favFoods.filter(f=>f.name!==item.name));
+        else setFavFoods([...favFoods,{name:item.name,calories:item.calories,protein:item.protein,carbs:item.carbs,fat:item.fat,water:item.water}]);
+      };
+      const addFav=fav=>setItems([...items,{id:Date.now(),...fav,time:nowTime()}]);
+
       const[showForm,setShowForm]=useState(false);
       const[mode,setMode]=useState("smart");
       const[smartInput,setSmartInput]=useState("");
@@ -562,8 +593,11 @@
       const[ifat,setIfat]=useState("");
       const[iwat,setIwat]=useState("");
       const[editId,setEditId]=useState(null);
+      const[camStatus,setCamStatus]=useState("idle"); // idle | scanning | done
       const smartRef=useRef(null);
       const nameRef=useRef(null);
+      const photoInputRef=useRef(null);
+      const barcodeInputRef=useRef(null);
 
       const totalCal=items.reduce((s,i)=>s+i.calories,0);
       const totalWater=items.reduce((s,i)=>s+i.water,0);
@@ -578,7 +612,11 @@
       },[showForm,mode]);
 
       const nowTime=()=>{const h=new Date().getHours();return h<12?"Morning":h<17?"Afternoon":"Evening";};
-      const resetForm=()=>{setIname("");setIcal("");setIprot("");setIcarb("");setIfat("");setIwat("");setSmartInput("");setPreview(null);setErr("");setEditId(null);setShowForm(false);setLoading(false);};
+      const resetForm=()=>{
+        setIname("");setIcal("");setIprot("");setIcarb("");setIfat("");setIwat("");
+        setSmartInput("");setPreview(null);setErr("");setEditId(null);setShowForm(false);
+        setLoading(false);setCamStatus("idle");
+      };
 
       const SYS_NUT=`You are a nutrition lookup tool. Given a food or drink item, return ONLY a raw JSON object: {"name":"...","calories":0,"protein":0.0,"carbs":0.0,"fat":0.0,"water":0.0}. water is fluid oz for beverages only, 0 for solid food. No markdown, no code fences, just JSON.`;
 
@@ -587,6 +625,58 @@
         setLoading(true);setErr("");setPreview(null);
         try{const raw=await ask([{role:"user",content:smartInput.trim()}],SYS_NUT,300);setPreview(parseJSON(raw));}
         catch{setErr("Couldn't look that up — try again or use manual.");}
+        setLoading(false);
+      };
+
+      // ── Camera / Barcode capture ──
+      const handleCapture=async(e,captureMode)=>{
+        const file=e.target.files?.[0];if(!file)return;
+        e.target.value="";
+        setCamStatus("scanning");setErr("");setPreview(null);setLoading(true);
+        try{
+          const dataUrl=await resizeImg(file,900,0.82);
+          const b64=dataUrl.split(",")[1];
+          const mt="image/jpeg";
+          if(captureMode==="barcode"){
+            // Step 1 – ask Claude to read any barcode in the image
+            const barcodeResp=await askVision(b64,mt,
+              "Look at this image. If there is a UPC or EAN barcode visible, return ONLY the numeric barcode number (8–14 digits). If no barcode, return the word NONE.",
+              120
+            );
+            const code=barcodeResp.trim().replace(/\D/g,"");
+            if(code.length>=8){
+              // Step 2 – look up Open Food Facts
+              try{
+                const r=await fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`);
+                const d=await r.json();
+                if(d.status===1&&d.product){
+                  const p=d.product,n=p.nutriments||{};
+                  const sv=k=>n[k+"_serving"]!=null?n[k+"_serving"]:(n[k+"_100g"]||0);
+                  setPreview({name:p.product_name||p.brands||"Product",
+                    calories:Math.round(sv("energy-kcal")),
+                    protein:Math.round(sv("proteins")*10)/10,
+                    carbs:Math.round(sv("carbohydrates")*10)/10,
+                    fat:Math.round(sv("fat")*10)/10,water:0});
+                  setCamStatus("done");setLoading(false);return;
+                }
+              }catch{}
+            }
+            // Fallback – let Claude read the label visually
+            const raw=await askVision(b64,mt,
+              'This is a food product label. Extract the nutrition facts per serving. Return ONLY JSON: {"name":"","calories":0,"protein":0,"carbs":0,"fat":0,"water":0}',
+              400
+            );
+            setPreview(parseJSON(raw));
+          }else{
+            // Photo of meal – estimate calories
+            const raw=await askVision(b64,mt,
+              'Identify the food or meal in this photo and estimate the nutrition for a typical serving. Return ONLY JSON: {"name":"","calories":0,"protein":0,"carbs":0,"fat":0,"water":0}. water is fluid oz only for drinks, otherwise 0.',
+              400
+            );
+            setPreview(parseJSON(raw));
+          }
+          setCamStatus("done");
+        }catch(e){setErr("Couldn't read that — try again or enter manually.");setCamStatus("idle");}
         setLoading(false);
       };
 
@@ -628,6 +718,23 @@
 
       const inpStyle=()=>({width:"100%",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,padding:"9px 12px",color:TXT,fontSize:14,fontFamily:"inherit",outline:"none",boxSizing:"border-box"});
 
+      // shared preview card (used by Smart Add, Photo, and Barcode modes)
+      const PreviewCard=()=>preview?(
+        <div style={{background:DEEP,borderRadius:10,padding:14,border:`1px solid ${BORDER}`,marginBottom:10,animation:"fadeUp .2s ease"}}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:TXT}}>{preview.name}</div>
+          {[["Calories",preview.calories,GOLD," cal"],["Protein",preview.protein,GREEN,"g"],["Carbs",preview.carbs,BLUE,"g"],["Fat",preview.fat,PURPLE,"g"],preview.water>0&&["Fluid",preview.water,BLUE," oz"]].filter(Boolean).map(([l,v,c,u])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
+              <span style={{fontSize:12,color:DIM}}>{l}</span>
+              <span style={{fontSize:12,color:c,fontWeight:700}}>{v}{u}</span>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:8,marginTop:12}}>
+            <button onClick={()=>{setPreview(null);setSmartInput("");setCamStatus("idle");}} style={{flex:1,padding:"10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,color:DIM,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>Redo</button>
+            <button onClick={confirmPreview} style={{flex:1,padding:"10px",background:R,border:"none",borderRadius:9,color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit",cursor:"pointer"}}>✓ Add</button>
+          </div>
+        </div>
+      ):null;
+
       return(
         <div style={{animation:"fadeUp .22s ease"}}>
           {plan.nutrition?.notes&&(
@@ -636,6 +743,8 @@
               <div style={{fontSize:10,color:GOLD,textAlign:"right",flexShrink:0}}>+{XP.NUTRITION_DAY} XP<br/>at 80%</div>
             </div>
           )}
+
+          {/* ── Calorie summary ── */}
           <div style={{display:"flex",gap:10,marginBottom:10}}>
             <div style={{flex:1,background:CARD,borderRadius:12,padding:"12px 14px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:7}}>
@@ -669,6 +778,8 @@
             <MacBar label="Carbs" value={totalCarbs} goal={CARB_GOAL} color={BLUE}/>
             <MacBar label="Fat" value={totalFat} goal={FAT_GOAL} color={PURPLE}/>
           </div>
+
+          {/* ── Food item list ── */}
           <div style={{marginBottom:10}}>
             {items.map(item=>(
               <div key={item.id} style={{display:"flex",alignItems:"flex-start",padding:"12px 0",borderBottom:`1px solid ${BORDER}`,animation:"fadeUp .22s ease"}}>
@@ -683,7 +794,12 @@
                     {item.water>0&&<span style={{color:BLUE}}>{item.water} oz 💧</span>}
                   </div>
                 </div>
-                <div style={{display:"flex",gap:6,flexShrink:0,marginTop:2}}>
+                <div style={{display:"flex",gap:2,flexShrink:0,marginTop:2,alignItems:"center"}}>
+                  {/* ★ favourite toggle */}
+                  <button onClick={()=>toggleFav(item)} title={isFav(item)?"Remove from favourites":"Save to favourites"}
+                    style={{background:"none",border:"none",color:isFav(item)?GOLD:FAINT,cursor:"pointer",fontSize:16,padding:"4px",lineHeight:1,transition:"color .15s"}}>
+                    {isFav(item)?"★":"☆"}
+                  </button>
                   <button onClick={()=>startEdit(item)} style={{background:"none",border:"none",color:FAINT,cursor:"pointer",fontSize:14,padding:"4px"}}>✎</button>
                   <button onClick={()=>removeItem(item.id)} style={{background:"none",border:"none",color:FAINT,cursor:"pointer",fontSize:16,padding:"4px"}}>×</button>
                 </div>
@@ -691,40 +807,129 @@
             ))}
             {items.length===0&&<div style={{fontSize:12,color:FAINT,textAlign:"center",padding:"20px 0"}}>Nothing logged yet — add your first item below</div>}
           </div>
+
+          {/* ── Add form ── */}
           {showForm?(
             <div style={{background:CARD,borderRadius:13,padding:18,marginBottom:12,border:`1px solid ${BORDER}`}}>
+
+              {/* mode tabs — hidden when editing an existing item */}
               {editId===null&&(
-                <div style={{display:"flex",marginBottom:14,background:DEEP,borderRadius:9,padding:3}}>
-                  <button onClick={()=>{setMode("smart");setPreview(null);setErr("");}} style={{flex:1,padding:"8px",background:mode==="smart"?CARD:"transparent",border:"none",borderRadius:7,color:mode==="smart"?R:FAINT,fontSize:11,fontFamily:"inherit",cursor:"pointer",fontWeight:mode==="smart"?700:400,transition:"all .2s"}}>✦ Smart Add</button>
-                  <button onClick={()=>{setMode("manual");setPreview(null);setErr("");}} style={{flex:1,padding:"8px",background:mode==="manual"?CARD:"transparent",border:"none",borderRadius:7,color:mode==="manual"?TXT:FAINT,fontSize:11,fontFamily:"inherit",cursor:"pointer",fontWeight:mode==="manual"?700:400,transition:"all .2s"}}>Manual</button>
+                <div style={{display:"flex",marginBottom:14,background:DEEP,borderRadius:9,padding:3,gap:2}}>
+                  {[["smart","✦ Smart"],["photo","📷 Photo"],["barcode","〠 Scan"],["manual","Manual"]].map(([m,label])=>(
+                    <button key={m} onClick={()=>{setMode(m);setPreview(null);setErr("");setCamStatus("idle");}}
+                      style={{flex:1,padding:"7px 4px",background:mode===m?CARD:"transparent",border:"none",borderRadius:7,
+                        color:mode===m?(m==="smart"?R:TXT):FAINT,fontSize:10,fontFamily:"inherit",cursor:"pointer",
+                        fontWeight:mode===m?700:400,transition:"all .2s",whiteSpace:"nowrap"}}>
+                      {label}
+                    </button>
+                  ))}
                 </div>
               )}
-              {mode==="smart"&&editId===null?(
+
+              {/* ── Smart Add ── */}
+              {(mode==="smart"&&editId===null)&&(
                 <>
+                  {/* Favourites quick-add row */}
+                  {favFoods.length>0&&(
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:9,color:GOLD,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>★ Saved</div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        {favFoods.map((f,i)=>(
+                          <button key={i} onClick={()=>addFav(f)}
+                            style={{padding:"5px 11px",borderRadius:20,background:DEEP,border:`1px solid ${GOLD}44`,color:GOLD,fontSize:12,fontFamily:"inherit",cursor:"pointer",transition:"all .15s"}}
+                            onMouseEnter={e=>{e.currentTarget.style.background="#FBBF2418";}}
+                            onMouseLeave={e=>{e.currentTarget.style.background=DEEP;}}>
+                            + {f.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div style={{position:"relative",marginBottom:10}}>
                     <input ref={smartRef} value={smartInput} onChange={e=>{setSmartInput(e.target.value);setPreview(null);setErr("");}} placeholder='e.g. "grilled chicken 6oz" or "20oz water"' onKeyDown={e=>{if(e.key==="Enter"&&!loading){e.preventDefault();handleSmartLookup();}}} disabled={loading} style={{...inpStyle(),paddingRight:60,opacity:loading?.6:1}}/>
                     <button onClick={handleSmartLookup} disabled={loading||!smartInput.trim()} style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:smartInput.trim()?R:BORDER,border:"none",borderRadius:7,padding:"6px 12px",color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit",cursor:smartInput.trim()?"pointer":"default",transition:"background .2s"}}>{loading?"···":"Go"}</button>
                   </div>
                   {loading&&<div style={{textAlign:"center",padding:"12px 0",fontSize:12,color:DIM}}>Looking up nutrition...</div>}
                   {err&&<div style={{padding:"9px 12px",background:"#CE202914",borderRadius:8,border:`1px solid #CE202933`,fontSize:12,color:R,marginBottom:10}}>{err}</div>}
-                  {preview&&(
-                    <div style={{background:DEEP,borderRadius:10,padding:14,border:`1px solid ${BORDER}`,marginBottom:10}}>
-                      <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:TXT}}>{preview.name}</div>
-                      {[["Calories",preview.calories,GOLD," cal"],["Protein",preview.protein,GREEN,"g"],["Carbs",preview.carbs,BLUE,"g"],["Fat",preview.fat,PURPLE,"g"],preview.water>0&&["Fluid",preview.water,BLUE," oz"]].filter(Boolean).map(([l,v,c,u])=>(
-                        <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
-                          <span style={{fontSize:12,color:DIM}}>{l}</span>
-                          <span style={{fontSize:12,color:c,fontWeight:700}}>{v}{u}</span>
-                        </div>
-                      ))}
-                      <div style={{display:"flex",gap:8,marginTop:12}}>
-                        <button onClick={()=>{setPreview(null);setSmartInput("");}} style={{flex:1,padding:"10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,color:DIM,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>Redo</button>
-                        <button onClick={confirmPreview} style={{flex:1,padding:"10px",background:R,border:"none",borderRadius:9,color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit",cursor:"pointer"}}>✓ Add</button>
+                  <PreviewCard/>
+                  <button onClick={resetForm} style={{width:"100%",padding:"10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,color:FAINT,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>Cancel</button>
+                </>
+              )}
+
+              {/* ── Photo mode ── */}
+              {(mode==="photo"&&editId===null)&&(
+                <div>
+                  {camStatus==="idle"&&!preview&&(
+                    <div style={{textAlign:"center",padding:"16px 0 10px"}}>
+                      <div style={{fontSize:13,color:DIM,marginBottom:16,lineHeight:1.6}}>Take or import a photo of your meal — Nova will identify it and estimate the nutrition.</div>
+                      <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+                        <label style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"14px 20px",background:DEEP,border:`1.5px solid ${BORDER}`,borderRadius:12,cursor:"pointer",transition:"border-color .2s"}}
+                          onMouseEnter={e=>e.currentTarget.style.borderColor=BLUE}
+                          onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
+                          <span style={{fontSize:28}}>📷</span>
+                          <span style={{fontSize:11,color:BLUE,fontWeight:700}}>Camera</span>
+                          <input type="file" accept="image/*" capture="environment" onChange={e=>handleCapture(e,"photo")} style={{display:"none"}}/>
+                        </label>
+                        <label style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"14px 20px",background:DEEP,border:`1.5px solid ${BORDER}`,borderRadius:12,cursor:"pointer",transition:"border-color .2s"}}
+                          onMouseEnter={e=>e.currentTarget.style.borderColor=BLUE}
+                          onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
+                          <span style={{fontSize:28}}>🖼️</span>
+                          <span style={{fontSize:11,color:DIM,fontWeight:700}}>Library</span>
+                          <input type="file" accept="image/*" onChange={e=>handleCapture(e,"photo")} style={{display:"none"}}/>
+                        </label>
                       </div>
                     </div>
                   )}
-                  <button onClick={resetForm} style={{width:"100%",padding:"10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,color:FAINT,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>Cancel</button>
-                </>
-              ):(
+                  {loading&&(
+                    <div style={{textAlign:"center",padding:"20px 0"}}>
+                      <div style={{fontSize:28,marginBottom:8}}>🔍</div>
+                      <div style={{fontSize:13,color:DIM}}>Analysing your meal...</div>
+                    </div>
+                  )}
+                  {err&&<div style={{padding:"9px 12px",background:"#CE202914",borderRadius:8,border:`1px solid #CE202933`,fontSize:12,color:R,marginBottom:10}}>{err}</div>}
+                  <PreviewCard/>
+                  <button onClick={resetForm} style={{width:"100%",marginTop:8,padding:"10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,color:FAINT,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>Cancel</button>
+                </div>
+              )}
+
+              {/* ── Barcode Scan mode ── */}
+              {(mode==="barcode"&&editId===null)&&(
+                <div>
+                  {camStatus==="idle"&&!preview&&(
+                    <div style={{textAlign:"center",padding:"16px 0 10px"}}>
+                      <div style={{fontSize:13,color:DIM,marginBottom:16,lineHeight:1.6}}>Point your camera at the barcode on the product packaging. Nova reads the code and pulls the nutrition data automatically.</div>
+                      <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+                        <label style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"14px 20px",background:DEEP,border:`1.5px solid ${BORDER}`,borderRadius:12,cursor:"pointer",transition:"border-color .2s"}}
+                          onMouseEnter={e=>e.currentTarget.style.borderColor=PURPLE}
+                          onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
+                          <span style={{fontSize:28}}>〠</span>
+                          <span style={{fontSize:11,color:PURPLE,fontWeight:700}}>Scan Barcode</span>
+                          <input type="file" accept="image/*" capture="environment" onChange={e=>handleCapture(e,"barcode")} style={{display:"none"}}/>
+                        </label>
+                        <label style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"14px 20px",background:DEEP,border:`1.5px solid ${BORDER}`,borderRadius:12,cursor:"pointer",transition:"border-color .2s"}}
+                          onMouseEnter={e=>e.currentTarget.style.borderColor=PURPLE}
+                          onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
+                          <span style={{fontSize:28}}>🖼️</span>
+                          <span style={{fontSize:11,color:DIM,fontWeight:700}}>Library</span>
+                          <input type="file" accept="image/*" onChange={e=>handleCapture(e,"barcode")} style={{display:"none"}}/>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                  {loading&&(
+                    <div style={{textAlign:"center",padding:"20px 0"}}>
+                      <div style={{fontSize:28,marginBottom:8}}>〠</div>
+                      <div style={{fontSize:13,color:DIM}}>Reading barcode...</div>
+                    </div>
+                  )}
+                  {err&&<div style={{padding:"9px 12px",background:"#CE202914",borderRadius:8,border:`1px solid #CE202933`,fontSize:12,color:R,marginBottom:10}}>{err}</div>}
+                  <PreviewCard/>
+                  <button onClick={resetForm} style={{width:"100%",marginTop:8,padding:"10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,color:FAINT,fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>Cancel</button>
+                </div>
+              )}
+
+              {/* ── Manual entry (also used for editing) ── */}
+              {(mode==="manual"||editId!==null)&&(
                 <>
                   <input ref={nameRef} value={iname} onChange={e=>setIname(e.target.value)} placeholder="Item name" onKeyDown={e=>e.key==="Enter"&&addItem()} style={{...inpStyle(),marginBottom:10}}/>
                   <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -746,6 +951,8 @@
           ):(
             <button onClick={()=>{setShowForm(true);setMode("smart");}} style={{width:"100%",padding:"14px",background:CARD,border:`1px dashed ${BORDER}`,borderRadius:12,color:DIM,fontSize:13,fontFamily:"inherit",cursor:"pointer",letterSpacing:.5,marginBottom:12}}>+ Log Food</button>
           )}
+
+          {/* ── Quick-add water ── */}
           <div style={{marginBottom:8}}>
             <div style={{fontSize:9,color:FAINT,letterSpacing:2,textTransform:"uppercase",marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Quick Add Water</div>
             <div style={{display:"flex",gap:8}}>
