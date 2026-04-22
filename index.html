@@ -394,7 +394,7 @@
     }
 
     // ─── Dashboard Tab ────────────────────────────────────────────────────────
-    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,onBeginWorkout,onChatFocus,today}){
+    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,nutLog,onBeginWorkout,onChatFocus,today}){
       const[bwInp,setBwInp]=useState("");
       const todayPlan=plan.weeklySchedule?.find(d=>d.day===today);
       const isRest=!todayPlan?.exercises?.length;
@@ -483,6 +483,42 @@
               {Object.keys(bwLog).length===0&&<span style={{fontSize:12,color:FAINT}}>No entries yet</span>}
             </div>
           </div>
+          {/* ── Weekly nutrition summary (only when plan has nutrition) ── */}
+          {plan.includeNutrition&&plan.nutrition&&(()=>{
+            const CAL_GOAL_D=parseFloat(plan.nutrition?.calories)||2000;
+            const PROT_GOAL_D=parseFloat(plan.nutrition?.protein)||150;
+            const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return d.toISOString().slice(0,10);});
+            const logged=days.filter(d=>nutLog&&nutLog[d]&&parseFloat(nutLog[d].calories)>0);
+            if(!logged.length)return null;
+            const avg=(key)=>Math.round(logged.reduce((s,d)=>s+(parseFloat(nutLog[d]?.[key])||0),0)/logged.length*10)/10;
+            const avgCal=Math.round(avg("calories"));
+            const avgProt=avg("protein");
+            const avgCarbs=avg("carbs");
+            const calColor=avgCal>=CAL_GOAL_D*0.85&&avgCal<=CAL_GOAL_D*1.1?GREEN:avgCal<CAL_GOAL_D*0.85?BLUE:R;
+            const protColor=avgProt>=PROT_GOAL_D*0.85?GREEN:GOLD;
+            return(
+              <div style={{background:CARD,borderRadius:13,padding:"13px 16px",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>📊 This Week · Nutrition</div>
+                  <div style={{fontSize:10,color:FAINT}}>{logged.length}/7 days</div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  {[
+                    {label:"Avg Cal",value:String(avgCal),sub:`goal ${CAL_GOAL_D}`,color:calColor},
+                    {label:"Avg Protein",value:`${avgProt}g`,sub:`goal ${plan.nutrition.protein}`,color:protColor},
+                    {label:"Avg Carbs",value:`${avgCarbs}g`,sub:`goal ${plan.nutrition.carbs}`,color:BLUE},
+                  ].map(({label,value,sub,color})=>(
+                    <div key={label} style={{flex:1,background:DEEP,borderRadius:9,padding:"9px 8px",textAlign:"center"}}>
+                      <div style={{fontSize:18,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color,lineHeight:1}}>{value}</div>
+                      <div style={{fontSize:8,color:FAINT,textTransform:"uppercase",letterSpacing:.8,marginTop:3}}>{label}</div>
+                      <div style={{fontSize:8,color:color,marginTop:1,opacity:.8}}>{sub}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {tomorrowPlan&&<div style={{background:DEEP,border:`1px solid ${BORDER}`,borderRadius:13,padding:"12px 14px"}}>
             <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5,marginBottom:5}}>Tomorrow · {tomorrowName}</div>
             <div style={{fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,color:tomorrowPlan.exercises?.length?DIM:FAINT}}>{tomorrowPlan.focus}</div>
@@ -745,39 +781,66 @@
           )}
 
           {/* ── Calorie summary ── */}
-          <div style={{display:"flex",gap:10,marginBottom:10}}>
-            <div style={{flex:1,background:CARD,borderRadius:12,padding:"12px 14px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:7}}>
-                <span style={{fontSize:9,letterSpacing:2,color:FAINT,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Calories</span>
-                <span style={{fontSize:16,color:GOLD,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif"}}>{Math.round(totalCal)}</span>
+          {(()=>{
+            const calRemaining=CAL_GOAL-Math.round(totalCal);
+            const over=calRemaining<0;
+            const barColor=over?R:`linear-gradient(90deg,${GOLD},#E8C96A)`;
+            return(
+              <div style={{background:CARD,borderRadius:13,padding:"14px 16px",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                  <div>
+                    <div style={{fontSize:9,color:FAINT,letterSpacing:2,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginBottom:3}}>
+                      {over?"Over Goal":"Remaining"}
+                    </div>
+                    <div style={{fontSize:38,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,lineHeight:1,color:over?R:calRemaining<200?GOLD:GREEN}}>
+                      {over?`+${-calRemaining}`:calRemaining}
+                    </div>
+                    <div style={{fontSize:11,color:FAINT,marginTop:5}}>
+                      <span style={{color:TXT,fontWeight:600}}>{Math.round(totalCal)}</span> eaten
+                      &nbsp;·&nbsp;
+                      <span style={{color:DIM}}>{CAL_GOAL} goal</span>
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",paddingTop:2}}>
+                    <div style={{fontSize:9,color:FAINT,letterSpacing:2,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginBottom:3}}>Water</div>
+                    <div style={{fontSize:24,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:BLUE,lineHeight:1}}>{totalWater} <span style={{fontSize:13}}>oz</span></div>
+                    <div style={{fontSize:10,color:FAINT,marginTop:4}}>{Math.round(pct(totalWater,WATER_GOAL))}% of {WATER_GOAL}</div>
+                  </div>
+                </div>
+                <div style={{height:5,background:DEEP,borderRadius:3,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${pct(totalCal,CAL_GOAL)}%`,background:barColor,borderRadius:3,transition:"width .4s"}}/>
+                </div>
               </div>
-              <div style={{height:5,background:DEEP,borderRadius:3,overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${pct(totalCal,CAL_GOAL)}%`,background:pct(totalCal,CAL_GOAL)>=100?R:`linear-gradient(90deg,${GOLD},#E8C96A)`,borderRadius:3,transition:"width .4s"}}/>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:FAINT,marginTop:3}}>
-                <span style={{color:pct(totalCal,CAL_GOAL)>=100?R:FAINT}}>{Math.round(pct(totalCal,CAL_GOAL))}%</span>
-                <span>/{CAL_GOAL}</span>
-              </div>
-            </div>
-            <div style={{flex:1,background:CARD,borderRadius:12,padding:"12px 14px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:7}}>
-                <span style={{fontSize:9,letterSpacing:2,color:FAINT,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Water</span>
-                <span style={{fontSize:16,color:BLUE,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif"}}>{totalWater} oz</span>
-              </div>
-              <div style={{height:5,background:DEEP,borderRadius:3,overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${pct(totalWater,WATER_GOAL)}%`,background:`linear-gradient(90deg,#3a7abd,${BLUE})`,borderRadius:3,transition:"width .4s"}}/>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:FAINT,marginTop:3}}>
-                <span>{Math.round(pct(totalWater,WATER_GOAL))}%</span>
-                <span>/{WATER_GOAL} oz</span>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
           <div style={{display:"flex",gap:10,marginBottom:12,padding:"13px 14px",background:CARD,borderRadius:12,border:`1px solid ${BORDER}`}}>
             <MacBar label="Protein" value={totalProtein} goal={PROTEIN_GOAL} color={GREEN}/>
             <MacBar label="Carbs" value={totalCarbs} goal={CARB_GOAL} color={BLUE}/>
             <MacBar label="Fat" value={totalFat} goal={FAT_GOAL} color={PURPLE}/>
           </div>
+
+          {/* ── Repeat Yesterday ── */}
+          {(()=>{
+            const yd=new Date();yd.setDate(yd.getDate()-1);
+            const ydKey=yd.toISOString().slice(0,10);
+            const ydItems=foodItems[ydKey]||[];
+            if(!ydItems.length)return null;
+            const ydCal=Math.round(ydItems.reduce((s,i)=>s+i.calories,0));
+            return(
+              <div style={{background:`${GOLD}0E`,border:`1px solid ${GOLD}30`,borderRadius:12,padding:"11px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:700,color:GOLD}}>↺ Repeat Yesterday</div>
+                  <div style={{fontSize:11,color:FAINT,marginTop:1}}>{ydItems.length} item{ydItems.length!==1?"s":""} · {ydCal} cal</div>
+                </div>
+                <button onClick={()=>{
+                  const copied=ydItems.map(it=>({...it,id:Date.now()+Math.random(),time:nowTime()}));
+                  setItems([...items,...copied]);
+                }} style={{flexShrink:0,padding:"7px 14px",borderRadius:9,background:GOLD,border:"none",color:"#0F1014",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  Copy
+                </button>
+              </div>
+            );
+          })()}
 
           {/* ── Food item list ── */}
           <div style={{marginBottom:10}}>
@@ -1079,7 +1142,7 @@
           </div>
           <TabBar tabs={TABS} active={tab} onChange={t=>{setTab(t);if(t==="chat")setTimeout(()=>chatInputRef.current?.focus(),100);}}/>
           <div style={{flex:1,overflowY:tab==="chat"?"hidden":"auto",padding:tab==="chat"?"11px 16px 0":"11px 16px 20px",display:"flex",flexDirection:"column",minHeight:0}}>
-            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
+            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} nutLog={nutLog} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
             {tab==="workouts"&&<WorkoutsTab plan={plan} log={log} prs={prs} today={today} onBeginWorkout={handleBeginWorkout}/>}
             {tab==="nutrition"&&plan.includeNutrition&&plan.nutrition&&<NutritionTab plan={plan} nutLog={nutLog} setNutLog={setNutLog} xp={xp} setXp={setXp}/>}
             {tab==="chat"&&<NovaTab plan={plan} log={log} chatMsgs={chatMsgs} setChatMsgs={setChatMsgs} inputRef={chatInputRef}/>}
