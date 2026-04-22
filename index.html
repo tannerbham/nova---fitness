@@ -307,10 +307,24 @@
       const[showConfetti,setShowConfetti]=useState(false);
       const[prBanner,setPrBanner]=useState(null);
       const dk=dateKey();
+      const rowRefs=useRef({});
+      const scrollRef=useRef(null); // the scroll container
       const setW=(ex,s,val)=>setWeights(p=>({...p,[lk(ex,s,dk)]:val}));
       const getW=(ex,s)=>weights[lk(ex,s,dk)]!==undefined?weights[lk(ex,s,dk)]:(log[lk(ex,s,dk)]?.weight||"");
       const isDone=(ex,s)=>!!log[lk(ex,s,dk)]?.done;
       const bestEver=ex=>{const id=exId(ex);const ws=Object.entries(log).filter(([k,v])=>k.startsWith(id+"__")&&v.done&&v.weight).map(([,v])=>parseFloat(v.weight)).filter(n=>!isNaN(n));return ws.length?Math.max(...ws):null;};
+      const scrollToNext=(completedKey)=>{
+        setTimeout(()=>{
+          const flatKeys=day.exercises.flatMap(ex=>Array.from({length:ex.sets},(_,s)=>lk(ex,s,dk)));
+          const idx=flatKeys.indexOf(completedKey);
+          for(let i=idx+1;i<flatKeys.length;i++){
+            if(!log[flatKeys[i]]?.done){
+              rowRefs.current[flatKeys[i]]?.scrollIntoView({behavior:"smooth",block:"center"});
+              break;
+            }
+          }
+        },200);
+      };
       const toggleSet=(ex,s)=>{
         const k=lk(ex,s,dk);const w=getW(ex,s);const wasDone=isDone(ex,s);
         if(wasDone){setLog(p=>{const n={...p};delete n[k];return n;});return;}
@@ -319,6 +333,7 @@
         setXp(p=>p+XP.SET+(isPR?XP.PR:0));
         if(isPR){setPrs(p=>({...p,[exId(ex)]:wNum}));setPrBanner(ex.name);setConfettiKey(k=>k+1);setShowConfetti(true);setTimeout(()=>setShowConfetti(false),3000);}
         else{setConfettiKey(k=>k+1);setShowConfetti(true);setTimeout(()=>setShowConfetti(false),1800);}
+        scrollToNext(k);
       };
       const total=day.exercises.reduce((a,e)=>a+e.sets,0);
       const done=day.exercises.reduce((a,ex)=>a+Array.from({length:ex.sets},(_,s)=>isDone(ex,s)?1:0).reduce((x,y)=>x+y,0),0);
@@ -346,7 +361,7 @@
               <button onClick={()=>setPrBanner(null)} style={{marginLeft:"auto",fontSize:11,color:FAINT,background:"none",border:"none",cursor:"pointer"}}>✕</button>
             </div>}
           </div>
-          <div style={{flex:1,overflowY:"auto",padding:"12px 16px 24px"}}>
+          <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"12px 16px 24px"}}>
             {day.exercises.map((ex,ei)=>{
               const best=bestEver(ex);
               const allDone=Array.from({length:ex.sets},(_,s)=>isDone(ex,s)).every(Boolean);
@@ -367,7 +382,7 @@
                       const done=isDone(ex,s);const w=getW(ex,s);
                       const setLabel=ex.sets===1?"Complete":`Set ${s+1}`;
                       return(
-                        <div key={s} style={{display:"flex",gap:8,alignItems:"center"}}>
+                        <div key={s} ref={el=>{rowRefs.current[lk(ex,s,dk)]=el;}} style={{display:"flex",gap:8,alignItems:"center"}}>
                           <span style={{fontSize:12,color:FAINT,width:44,flexShrink:0}}>{setLabel}</span>
                           {isLifting&&<input type="number" placeholder="lbs" value={w} onChange={e=>setW(ex,s,e.target.value)}
                             style={{width:68,background:done?`${GREEN}18`:DEEP,border:`1px solid ${done?GREEN+"55":BORDER}`,borderRadius:9,padding:"7px 10px",color:TXT,fontSize:14,outline:"none",fontFamily:"inherit",transition:"all .2s"}}/>}
@@ -394,7 +409,7 @@
     }
 
     // ─── Dashboard Tab ────────────────────────────────────────────────────────
-    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,nutLog,onBeginWorkout,onChatFocus,today}){
+    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,nutLog,photos,setPhotos,onBeginWorkout,onChatFocus,today}){
       const[bwInp,setBwInp]=useState("");
       const todayPlan=plan.weeklySchedule?.find(d=>d.day===today);
       const isRest=!todayPlan?.exercises?.length;
@@ -469,6 +484,7 @@
             <Av sz={32}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:TXT}}>Ask Nova anything</div><div style={{fontSize:11,color:FAINT,marginTop:1}}>Tips, form, motivation…</div></div>
             <span style={{fontSize:16,color:R}}>→</span>
           </button>
+          {/* ── Bodyweight log + line graph ── */}
           <div style={{background:CARD,borderRadius:13,padding:"13px 16px",marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5}}>⚖️ Bodyweight Log</div>
@@ -478,10 +494,95 @@
               <input type="number" value={bwInp} onChange={e=>setBwInp(e.target.value)} placeholder="lbs" style={{flex:1,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:9,padding:"9px 12px",color:TXT,fontSize:15,outline:"none",fontFamily:"inherit"}} onKeyDown={e=>e.key==="Enter"&&logBW()}/>
               <button onClick={logBW} style={{padding:"9px 18px",borderRadius:9,background:R,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer"}}>{bwLog[dk]?"Update":"Log"}</button>
             </div>
+            {/* Line graph — shown as soon as there are 2+ entries */}
+            {(()=>{
+              const ent=Object.entries(bwLog).sort((a,b)=>a[0].localeCompare(b[0])).slice(-14);
+              if(ent.length<2)return(
+                <div style={{fontSize:11,color:FAINT,padding:"2px 0 4px"}}>{ent.length===1?`${ent[0][1]} lbs — log more to see your trend`:"Log your weight each day to track progress"}</div>
+              );
+              const W=280,H=54,P=4;
+              const vals=ent.map(([,v])=>parseFloat(v));
+              const mn=Math.min(...vals),mx=Math.max(...vals),rng=mx-mn||1;
+              const px=i=>(i/(ent.length-1))*(W-P*2)+P;
+              const py=v=>H-P-((v-mn)/rng)*(H-P*2);
+              const pts=ent.map(([,v],i)=>({x:px(i),y:py(parseFloat(v))}));
+              const line=pts.map((p,i)=>`${i===0?"M":"L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+              const area=`${line} L${pts[pts.length-1].x.toFixed(1)},${H} L${pts[0].x.toFixed(1)},${H} Z`;
+              const trend=vals[vals.length-1]-vals[0];
+              const tc=trend<-0.05?GREEN:trend>0.05?R:DIM;
+              return(
+                <div style={{marginBottom:6}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                    <span style={{fontSize:10,color:FAINT}}>Last {ent.length} entries</span>
+                    <span style={{fontSize:11,fontWeight:700,color:tc}}>
+                      {trend>0.05?"+":""}{trend.toFixed(1)} lbs {trend<-0.05?"↓":trend>0.05?"↑":"→"}
+                    </span>
+                  </div>
+                  <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{overflow:"visible"}}>
+                    <defs>
+                      <linearGradient id="bwGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={GREEN} stopOpacity="0.22"/>
+                        <stop offset="100%" stopColor={GREEN} stopOpacity="0.01"/>
+                      </linearGradient>
+                    </defs>
+                    <path d={area} fill="url(#bwGrad)"/>
+                    <path d={line} fill="none" stroke={GREEN} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                    {pts.map((p,i)=>(
+                      <circle key={i} cx={p.x} cy={p.y}
+                        r={i===pts.length-1?3.5:2}
+                        fill={i===pts.length-1?GREEN:BG}
+                        stroke={GREEN} strokeWidth={i===pts.length-1?0:1.5}/>
+                    ))}
+                    <text x={pts[pts.length-1].x} y={Math.max(pts[pts.length-1].y-8,10)}
+                      textAnchor="middle" fontSize="9" fill={GREEN}
+                      fontFamily="DM Sans,sans-serif" fontWeight="700">
+                      {vals[vals.length-1]}
+                    </text>
+                  </svg>
+                </div>
+              );
+            })()}
+            {/* Recent tags */}
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {Object.entries(bwLog).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,7).map(([dt,w])=><div key={dt} style={{background:DEEP,borderRadius:7,padding:"4px 10px",fontSize:12}}><span style={{color:TXT,fontWeight:600}}>{w} lbs</span><span style={{color:FAINT,marginLeft:5}}>{dt.slice(5)}</span></div>)}
-              {Object.keys(bwLog).length===0&&<span style={{fontSize:12,color:FAINT}}>No entries yet</span>}
+              {Object.entries(bwLog).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,5).map(([dt,w])=><div key={dt} style={{background:DEEP,borderRadius:7,padding:"4px 10px",fontSize:12}}><span style={{color:TXT,fontWeight:600}}>{w} lbs</span><span style={{color:FAINT,marginLeft:5}}>{dt.slice(5)}</span></div>)}
             </div>
+          </div>
+
+          {/* ── Progress Photos ── */}
+          <div style={{background:CARD,borderRadius:13,padding:"13px 16px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:(photos||[]).length?8:0}}>
+              <div style={{fontSize:10,color:FAINT,textTransform:"uppercase",letterSpacing:1.5}}>📸 Progress Photos</div>
+              <div style={{display:"flex",gap:6}}>
+                <label style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",background:"#CE202914",border:`1px solid #CE202933`,borderRadius:7,cursor:"pointer"}}>
+                  <span style={{fontSize:11,color:R,fontWeight:700}}>📷 Camera</span>
+                  <input type="file" accept="image/*" capture="environment" onChange={async e=>{
+                    const f=e.target.files?.[0];if(!f)return;e.target.value="";
+                    const dataUrl=await resizeImg(f,500,0.5);
+                    setPhotos(prev=>[{id:Date.now(),date:dateKey(),dataUrl},...(prev||[])].slice(0,10));
+                  }} style={{display:"none"}}/>
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",background:DEEP,border:`1px solid ${BORDER}`,borderRadius:7,cursor:"pointer"}}>
+                  <span style={{fontSize:11,color:DIM,fontWeight:700}}>Library</span>
+                  <input type="file" accept="image/*" onChange={async e=>{
+                    const f=e.target.files?.[0];if(!f)return;e.target.value="";
+                    const dataUrl=await resizeImg(f,500,0.5);
+                    setPhotos(prev=>[{id:Date.now(),date:dateKey(),dataUrl},...(prev||[])].slice(0,10));
+                  }} style={{display:"none"}}/>
+                </label>
+              </div>
+            </div>
+            {(photos||[]).length>0?(
+              <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:2}}>
+                {(photos||[]).map(p=>(
+                  <div key={p.id} style={{flexShrink:0,position:"relative",width:74,height:74,borderRadius:9,overflow:"hidden",border:`1px solid ${BORDER}`}}>
+                    <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                    <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(15,16,20,.78)",fontSize:8,color:DIM,textAlign:"center",padding:"2px 0"}}>{p.date.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
+            ):(
+              <div style={{fontSize:11,color:FAINT,marginTop:6}}>Log weekly check-in photos to track your transformation</div>
+            )}
           </div>
           {/* ── Weekly nutrition summary (only when plan has nutrition) ── */}
           {plan.includeNutrition&&plan.nutrition&&(()=>{
@@ -1072,6 +1173,7 @@
       const[prs,setPrs]=useLS("nv6_prs",{});
       const[bwLog,setBwLog]=useLS("nv6_bw",{});
       const[nutLog,setNutLog]=useLS("nv6_nut",{});
+      const[photos,setPhotos]=useLS("nv6_photos",[]);
       const[chatMsgs,setChatMsgs]=useLS("nv6_chat",null);
       const[activeWorkoutDay,setActiveWorkoutDay]=useState(null);
       const[confetti,setConfetti]=useState(false);
@@ -1142,7 +1244,7 @@
           </div>
           <TabBar tabs={TABS} active={tab} onChange={t=>{setTab(t);if(t==="chat")setTimeout(()=>chatInputRef.current?.focus(),100);}}/>
           <div style={{flex:1,overflowY:tab==="chat"?"hidden":"auto",padding:tab==="chat"?"11px 16px 0":"11px 16px 20px",display:"flex",flexDirection:"column",minHeight:0}}>
-            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} nutLog={nutLog} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
+            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} nutLog={nutLog} photos={photos} setPhotos={setPhotos} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
             {tab==="workouts"&&<WorkoutsTab plan={plan} log={log} prs={prs} today={today} onBeginWorkout={handleBeginWorkout}/>}
             {tab==="nutrition"&&plan.includeNutrition&&plan.nutrition&&<NutritionTab plan={plan} nutLog={nutLog} setNutLog={setNutLog} xp={xp} setXp={setXp}/>}
             {tab==="chat"&&<NovaTab plan={plan} log={log} chatMsgs={chatMsgs} setChatMsgs={setChatMsgs} inputRef={chatInputRef}/>}
