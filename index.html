@@ -18,6 +18,13 @@
     ::-webkit-scrollbar-thumb{background:#2A2B35;border-radius:3px;}
     @keyframes bounce{0%,80%,100%{transform:scale(.6);opacity:.4}40%{transform:scale(1);opacity:1}}
     @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes tabIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes splashIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+    @keyframes splashOut{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.05)}}
+    @keyframes pulseRing{0%,100%{transform:scale(.94);opacity:.5}50%{transform:scale(1.06);opacity:.15}}
+    @keyframes loadBar{from{width:0}to{width:100%}}
+    @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes heroGlow{0%,100%{opacity:.6}50%{opacity:1}}
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
     input::placeholder{color:#55565F;}
@@ -123,8 +130,75 @@
       return <div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:11,color:DIM}}>Clear everything?</span><button onClick={()=>{setStep(0);onReset();}} style={{fontSize:12,fontWeight:700,color:"#fff",background:R,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>Yes</button><button onClick={()=>setStep(0)} style={{fontSize:12,color:FAINT,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>No</button></div>;
     }
 
+    // ─── Splash Screen ────────────────────────────────────────────────────────
+    function SplashScreen({onDone}){
+      const[out,setOut]=useState(false);
+      useEffect(()=>{
+        const t1=setTimeout(()=>setOut(true),1500);
+        const t2=setTimeout(()=>onDone(),1900);
+        return()=>{clearTimeout(t1);clearTimeout(t2);};
+      },[]);
+      return(
+        <div style={{position:"fixed",inset:0,background:BG,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:9999,animation:out?"splashOut .4s ease forwards":"splashIn .5s ease forwards"}}>
+          <div style={{position:"relative",marginBottom:20}}>
+            <div style={{position:"absolute",inset:-10,borderRadius:"50%",border:`1.5px solid ${R}`,opacity:.3,animation:"pulseRing 2s ease infinite"}}/>
+            <div style={{position:"absolute",inset:-20,borderRadius:"50%",border:`1px solid ${R}`,opacity:.15,animation:"pulseRing 2s ease infinite",animationDelay:".4s"}}/>
+            <div style={{width:76,height:76,borderRadius:"50%",background:`linear-gradient(135deg,#B01822,${R})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:34,fontWeight:900,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:-1,boxShadow:`0 0 48px #CE202955`}}>N</div>
+          </div>
+          <div style={{fontSize:30,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,letterSpacing:5,color:TXT,textTransform:"uppercase",marginBottom:5}}>Nova Fitness</div>
+          <div style={{fontSize:11,color:FAINT,letterSpacing:3,textTransform:"uppercase",marginBottom:48}}>Your personal trainer</div>
+          <div style={{width:100,height:2,background:BORDER,borderRadius:2,overflow:"hidden"}}>
+            <div style={{height:"100%",background:`linear-gradient(90deg,${R},#E8525A)`,borderRadius:2,animation:"loadBar 1.4s cubic-bezier(.4,0,.2,1) forwards"}}/>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Tab Bar ──────────────────────────────────────────────────────────────
+    const TAB_ICONS={
+      dashboard:(c)=>(
+        <svg width="20" height="20" viewBox="0 0 24 24" fill={c}>
+          <path d="M12 3L2 12.5h3V21h5.5v-5.5h3V21H19v-8.5h3z"/>
+        </svg>
+      ),
+      workouts:(c)=>(
+        <svg width="20" height="20" viewBox="0 0 24 24" fill={c}>
+          <rect x="1.5" y="9.5" width="4" height="5" rx="1.5"/>
+          <rect x="18.5" y="9.5" width="4" height="5" rx="1.5"/>
+          <rect x="6" y="8" width="2.5" height="8" rx="1.2"/>
+          <rect x="15.5" y="8" width="2.5" height="8" rx="1.2"/>
+          <rect x="8.5" y="10.8" width="7" height="2.4" rx="1"/>
+        </svg>
+      ),
+      nutrition:(c)=>(
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5c-3.5 0-7 2.2-7 6.5 0 5 3.5 8 7 8s7-3 7-8c0-4.3-3.5-6.5-7-6.5z"/>
+          <path d="M12 5c0-2.2.8-3.5 2-4.2"/>
+        </svg>
+      ),
+      chat:(c)=>(
+        <svg width="20" height="20" viewBox="0 0 24 24" fill={c}>
+          <path d="M14 2L3.5 13.5H11L9.5 22 21 10.5h-8z"/>
+        </svg>
+      ),
+    };
     function TabBar({tabs,active,onChange}){
-      return <div style={{display:"flex",gap:3,padding:"10px 14px 0",flexShrink:0}}>{tabs.map(t=><button key={t.id} onClick={()=>onChange(t.id)} style={{flex:1,padding:"7px 4px",borderRadius:10,border:`1.5px solid ${active===t.id?"#CE202955":"transparent"}`,background:active===t.id?"#CE202914":"transparent",color:active===t.id?R:FAINT,cursor:"pointer",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:.5,transition:"all .2s"}}><div style={{fontSize:15,marginBottom:1}}>{t.icon}</div>{t.label}</button>)}</div>;
+      return(
+        <div style={{display:"flex",padding:"0 8px",flexShrink:0,borderBottom:`1px solid ${BORDER}`,background:BG}}>
+          {tabs.map(t=>{
+            const isActive=active===t.id;
+            const ic=TAB_ICONS[t.id];
+            const color=isActive?R:FAINT;
+            return(
+              <button key={t.id} onClick={()=>onChange(t.id)}
+                style={{flex:1,padding:"10px 4px 9px",border:"none",borderBottom:`2px solid ${isActive?R:"transparent"}`,background:"transparent",color,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,transition:"color .18s, border-color .18s",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:.6,fontSize:9,textTransform:"uppercase",outline:"none"}}>
+                {ic?ic(color):<span style={{fontSize:16}}>{t.icon}</span>}
+                <span>{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
     }
 
     // ─── Chips ────────────────────────────────────────────────────────────────
@@ -409,12 +483,31 @@
     }
 
     // ─── Dashboard Tab ────────────────────────────────────────────────────────
-    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,nutLog,photos,setPhotos,onBeginWorkout,onChatFocus,today}){
+    function DashboardTab({plan,log,xp,bwLog,setBwLog,setXp,nutLog,photos,setPhotos,prs,onViewPRs,onBeginWorkout,onChatFocus,today}){
       const[bwInp,setBwInp]=useState("");
       const todayPlan=plan.weeklySchedule?.find(d=>d.day===today);
       const isRest=!todayPlan?.exercises?.length;
       const dk=dateKey();
-      const streak=(()=>{let s=0;const d=new Date();for(let i=0;i<60;i++){const k=d.toISOString().slice(0,10);const worked=Object.keys(log).some(l=>l.includes(`__${k}__`)&&log[l].done);if(worked)s++;else if(i>0)break;d.setDate(d.getDate()-1);}return s;})();
+      // Streak: consecutive days where user either logged a workout OR the day was a scheduled rest day.
+      // Rest days automatically keep the streak alive. Today (if not yet done) doesn't break it.
+      const streak=(()=>{
+        const anyLogged=Object.keys(log).some(k=>log[k]?.done);
+        if(!anyLogged)return 0;
+        let s=0;const d=new Date();
+        for(let i=0;i<90;i++){
+          const k=d.toISOString().slice(0,10);
+          const dayN=DAYS[d.getDay()];
+          const planDay=plan.weeklySchedule?.find(pd=>pd.day===dayN);
+          const isRD=!planDay?.exercises?.length;
+          const worked=Object.keys(log).some(l=>l.includes(`__${k}__`)&&log[l]?.done);
+          if(worked){s++;}
+          else if(isRD){s++;}
+          else if(i===0){/* today's workout not done yet — don't break streak */}
+          else{break;}
+          d.setDate(d.getDate()-1);
+        }
+        return s;
+      })();
       const weekStart=new Date();weekStart.setDate(weekStart.getDate()-weekStart.getDay());
       const workoutDays=plan.weeklySchedule?.filter(d=>d.exercises?.length>0)||[];
       const doneThisWeek=workoutDays.filter(d=>{const di=DAYS.indexOf(d.day);const dd=new Date(weekStart);dd.setDate(weekStart.getDate()+di);const k=dd.toISOString().slice(0,10);return Object.keys(log).some(l=>l.includes(`__${k}__`)&&log[l].done);}).length;
@@ -427,7 +520,42 @@
       const tomorrowPlan=plan.weeklySchedule?.find(d=>d.day===tomorrowName);
       const logBW=()=>{const v=parseFloat(bwInp);if(isNaN(v)||v<=0)return;const isNew=!bwLog[dk];setBwLog(p=>({...p,[dk]:v}));if(isNew)setXp(p=>p+XP.BODYWEIGHT);setBwInp("");};
       return(
-        <div style={{animation:"fadeUp .22s ease"}}>
+        <div style={{animation:"fadeUp .25s ease"}}>
+          {/* ── Hero greeting card ── */}
+          {(()=>{
+            const hour=new Date().getHours();
+            const greeting=hour<5?"Late Night":hour<12?"Good Morning":hour<17?"Good Afternoon":"Good Evening";
+            const restQuotes=["Recovery is training. Rest hard.","Muscles grow while you rest. Trust the process.","Active rest day. Stay loose, stay ready.","Recovery isn't optional — it's the program."];
+            const activeQuotes=["Every rep is a vote for who you're becoming.","Consistency beats intensity. Every single time.","You showed up. That's already half the battle.","Progress isn't always visible — but it's always happening.","Small efforts repeated daily become extraordinary results.","Champions train. Everyone else just exercises."];
+            const doneQuotes=["Done. That one's in the bank.","Locked in. Now go recover.","Another one checked off. Momentum is real.","Today's work is done. Well earned.","You put in what others skip."];
+            const pool=isRest?restQuotes:(done===total&&total>0)?doneQuotes:activeQuotes;
+            const quote=pool[xp%pool.length]||pool[0];
+            const streakColor=streak>=14?PURPLE:streak>=7?GOLD:streak>=3?R:DIM;
+            const focusLine=isRest?"Rest Day · Recovery":(todayPlan?.focus||"Workout Day");
+            return(
+              <div style={{background:`linear-gradient(140deg,#1C0507 0%,#1A1B22 55%,#1E1F27 100%)`,border:`1px solid #CE202940`,borderRadius:15,padding:"18px 16px 15px",marginBottom:10,position:"relative",overflow:"hidden"}}>
+                <div style={{position:"absolute",top:-28,right:-28,width:100,height:100,borderRadius:"50%",background:`radial-gradient(circle,#CE202922 0%,transparent 70%)`,pointerEvents:"none",animation:"heroGlow 3s ease infinite"}}/>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                  <div>
+                    <div style={{fontSize:10,color:R,letterSpacing:2.5,textTransform:"uppercase",marginBottom:3,fontFamily:"'Barlow Condensed',sans-serif"}}>{greeting}</div>
+                    <div style={{fontSize:26,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,color:TXT,letterSpacing:.5,lineHeight:1,marginBottom:3}}>{today.toUpperCase()}</div>
+                    <div style={{fontSize:12,color:isRest?FAINT:DIM}}>{focusLine}</div>
+                  </div>
+                  {streak>0&&(
+                    <div style={{display:"flex",flexDirection:"column",alignItems:"center",background:"rgba(15,16,20,.6)",border:`1.5px solid ${streakColor}55`,borderRadius:11,padding:"8px 11px",minWidth:52,flexShrink:0}}>
+                      <div style={{fontSize:20,lineHeight:1,marginBottom:1}}>🔥</div>
+                      <div style={{fontSize:22,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,color:streakColor,lineHeight:1}}>{streak}</div>
+                      <div style={{fontSize:8,color:FAINT,textTransform:"uppercase",letterSpacing:.8,marginTop:2}}>day{streak!==1?"s":""}</div>
+                    </div>
+                  )}
+                </div>
+                <div style={{borderTop:`1px solid #CE202920`,paddingTop:10}}>
+                  <div style={{fontSize:11,color:FAINT,fontStyle:"italic",lineHeight:1.55}}>"{quote}"</div>
+                </div>
+              </div>
+            );
+          })()}
+          {/* ── XP / Level card ── */}
           <div style={{background:CARD,borderRadius:13,padding:"13px 16px",marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -442,11 +570,11 @@
             <div style={{fontSize:10,color:FAINT,marginTop:5,lineHeight:1.6}}>+{XP.SET} XP/set · +{XP.WORKOUT} finish workout · +{XP.PR} PR · +{XP.BODYWEIGHT} log weight · +{XP.NUTRITION_DAY} log macros</div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-            <div style={{background:CARD,borderRadius:12,padding:"12px 10px",textAlign:"center"}}>
-              <div style={{fontSize:22}}>{streak>0?"🔥":"💤"}</div>
-              <div style={{fontSize:24,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:streak>0?R:FAINT,lineHeight:1}}>{streak}</div>
-              <div style={{fontSize:10,color:FAINT,marginTop:2}}>day streak</div>
-            </div>
+            <button onClick={onViewPRs} style={{background:CARD,borderRadius:12,padding:"12px 10px",textAlign:"center",border:"none",cursor:"pointer",fontFamily:"inherit"}}>
+              <div style={{fontSize:20,marginBottom:1}}>🏆</div>
+              <div style={{fontSize:24,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:GOLD,lineHeight:1}}>{Object.keys(prs||{}).length}</div>
+              <div style={{fontSize:10,color:FAINT,marginTop:2}}>PRs set</div>
+            </button>
             <div style={{background:CARD,borderRadius:12,padding:"12px 10px",textAlign:"center"}}>
               <div style={{position:"relative",width:46,height:46,margin:"0 auto 2px"}}>
                 <svg width="46" height="46" style={{transform:"rotate(-90deg)"}}>
@@ -630,12 +758,21 @@
     }
 
     // ─── Workouts Tab ─────────────────────────────────────────────────────────
-    function WorkoutsTab({plan,log,prs,today,onBeginWorkout}){
+    function WorkoutsTab({plan,log,prs,today,onBeginWorkout,onViewPRs}){
       const[open,setOpen]=useState(null);
       const dk=dateKey();
       const bestEver=ex=>{const id=exId(ex);const ws=Object.entries(log).filter(([k,v])=>k.startsWith(id+"__")&&v.done&&v.weight).map(([,v])=>parseFloat(v.weight)).filter(n=>!isNaN(n));return ws.length?Math.max(...ws):null;};
+      const prCount=Object.keys(prs||{}).length;
       return(
-        <div style={{animation:"fadeUp .22s ease"}}>
+        <div style={{animation:"tabIn .22s ease"}}>
+          {prCount>0&&<button onClick={onViewPRs} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"#FBBF2410",border:`1px solid ${GOLD}44`,borderRadius:12,cursor:"pointer",marginBottom:10,textAlign:"left",fontFamily:"inherit"}}>
+            <span style={{fontSize:20}}>🏆</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700,color:GOLD}}>Personal Records</div>
+              <div style={{fontSize:11,color:FAINT,marginTop:1}}>{prCount} lift{prCount!==1?"s":""} tracked</div>
+            </div>
+            <span style={{fontSize:13,color:GOLD}}>→</span>
+          </button>}
           {plan.weeklySchedule?.map((day,i)=>{
             const rest=!day.exercises?.length;const isToday=day.day===today;const isOpen=open===i;
             const todayDone=isToday?day.exercises?.reduce((a,ex)=>a+Array.from({length:ex.sets},(_,s)=>log[lk(ex,s,dk)]?.done?1:0).reduce((x,y)=>x+y,0),0)||0:0;
@@ -676,6 +813,107 @@
               </div>
             );
           })}
+        </div>
+      );
+    }
+
+    // ─── PR History Screen ────────────────────────────────────────────────────
+    function PRHistoryScreen({plan,log,prs,onClose}){
+      const exNames={};
+      plan.weeklySchedule?.forEach(d=>d.exercises?.forEach(ex=>{exNames[exId(ex)]=ex.name;}));
+      // Build per-exercise weight history → derive PR progression
+      const histMap={};
+      Object.entries(log).forEach(([k,v])=>{
+        if(!v?.done||!v.weight)return;
+        const parts=k.split("__");
+        const id=parts[0];const date=parts[1]||v.date||"";
+        const w=parseFloat(v.weight);
+        if(isNaN(w)||w<=0||!date)return;
+        if(!histMap[id])histMap[id]={name:exNames[id]||id.replace(/_/g," "),byDate:{}};
+        if(!histMap[id].byDate[date]||w>histMap[id].byDate[date])histMap[id].byDate[date]=w;
+      });
+      const prData=Object.entries(histMap).map(([id,data])=>{
+        const sorted=Object.entries(data.byDate).sort((a,b)=>a[0].localeCompare(b[0]));
+        let runMax=0;
+        const progression=[];
+        sorted.forEach(([date,w])=>{if(w>runMax){runMax=w;progression.push({date,weight:w});}});
+        return{id,name:data.name,best:runMax,progression};
+      }).filter(d=>d.best>0).sort((a,b)=>b.best-a.best);
+      return(
+        <div style={{position:"fixed",inset:0,background:BG,zIndex:200,maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",animation:"slideUp .28s ease"}}>
+          <div style={{padding:"14px 18px 11px",borderBottom:`1px solid ${BORDER}`,flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:10,letterSpacing:3,color:GOLD,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif"}}>All Time</div>
+              <div style={{fontSize:24,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,color:TXT,letterSpacing:.3}}>PR HISTORY</div>
+            </div>
+            <button onClick={onClose} style={{fontSize:12,color:FAINT,background:DEEP,border:`1px solid ${BORDER}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"12px 16px 32px"}}>
+            {prData.length===0?(
+              <div style={{textAlign:"center",padding:"60px 20px"}}>
+                <div style={{fontSize:44,marginBottom:14}}>🏆</div>
+                <div style={{fontSize:16,fontWeight:700,color:TXT,marginBottom:6}}>No PRs yet</div>
+                <div style={{fontSize:12,color:FAINT,lineHeight:1.6}}>Log weights during workouts and Nova will track your personal records here automatically.</div>
+              </div>
+            ):prData.map((ex,i)=>{
+              const prog=ex.progression;
+              const W=260,H=44,P=4;
+              const showGraph=prog.length>=2;
+              const vals=prog.map(p=>p.weight);
+              const mn=Math.min(...vals),mx=Math.max(...vals),rng=mx-mn||1;
+              const px=idx=>(idx/(prog.length-1))*(W-P*2)+P;
+              const py=v=>H-P-((v-mn)/rng)*(H-P*2);
+              const pts=prog.map((p,idx)=>({x:px(idx),y:py(p.weight)}));
+              const line=pts.map((p,idx)=>`${idx===0?"M":"L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+              const area=`${line} L${pts[pts.length-1].x.toFixed(1)},${H} L${pts[0].x.toFixed(1)},${H} Z`;
+              return(
+                <div key={ex.id} style={{background:CARD,borderRadius:13,padding:"13px 14px",marginBottom:10,animation:`slideUp .2s ease ${i*40}ms both`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:showGraph?8:0}}>
+                    <div>
+                      <div style={{fontSize:15,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",color:TXT,marginBottom:2}}>{ex.name}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:11,color:FAINT}}>🏆 Current PR</span>
+                        <span style={{fontSize:17,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,color:GOLD}}>{ex.best} lbs</span>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:9,color:FAINT,textTransform:"uppercase",letterSpacing:1}}>Set on</div>
+                      <div style={{fontSize:12,color:DIM,marginTop:1}}>{prog[prog.length-1]?.date?.slice(5)}</div>
+                      <div style={{fontSize:10,color:FAINT,marginTop:1}}>{prog.length} PR{prog.length!==1?"s":""} total</div>
+                    </div>
+                  </div>
+                  {showGraph&&(
+                    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{overflow:"visible",display:"block"}}>
+                      <defs>
+                        <linearGradient id={`prGrad${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={GOLD} stopOpacity="0.25"/>
+                          <stop offset="100%" stopColor={GOLD} stopOpacity="0.02"/>
+                        </linearGradient>
+                      </defs>
+                      <path d={area} fill={`url(#prGrad${i})`}/>
+                      <path d={line} fill="none" stroke={GOLD} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                      {pts.map((p,idx)=>(
+                        <g key={idx}>
+                          <circle cx={p.x} cy={p.y} r={idx===pts.length-1?4:2.5} fill={idx===pts.length-1?GOLD:BG} stroke={GOLD} strokeWidth={idx===pts.length-1?0:1.5}/>
+                          {idx===pts.length-1&&<text x={p.x} y={Math.max(p.y-8,10)} textAnchor="middle" fontSize="8.5" fill={GOLD} fontFamily="DM Sans,sans-serif" fontWeight="700">{prog[idx].weight}</text>}
+                        </g>
+                      ))}
+                    </svg>
+                  )}
+                  {prog.length>=2&&(
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                      {prog.map((p,j)=>(
+                        <div key={j} style={{background:DEEP,borderRadius:7,padding:"4px 9px",border:`1px solid ${j===prog.length-1?GOLD+"55":BORDER}`}}>
+                          <div style={{fontSize:12,fontWeight:700,color:j===prog.length-1?GOLD:TXT}}>{p.weight} lbs</div>
+                          <div style={{fontSize:9,color:FAINT}}>{p.date.slice(5)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       );
     }
@@ -1177,6 +1415,7 @@
       const[chatMsgs,setChatMsgs]=useLS("nv6_chat",null);
       const[activeWorkoutDay,setActiveWorkoutDay]=useState(null);
       const[confetti,setConfetti]=useState(false);
+      const[showPRHistory,setShowPRHistory]=useState(false);
       const chatInputRef=useRef(null);
       const today=todayName();
       const todayPlan=plan.weeklySchedule?.find(d=>d.day===today);
@@ -1220,32 +1459,33 @@
       };
 
       const TABS=[
-        {id:"dashboard",icon:"🏠",label:"Home"},
-        {id:"workouts",icon:"💪",label:"Workouts"},
-        ...(plan.includeNutrition&&plan.nutrition?[{id:"nutrition",icon:"🥗",label:"Nutrition"}]:[]),
-        {id:"chat",icon:"💬",label:"Nova"},
+        {id:"dashboard",label:"Home"},
+        {id:"workouts",label:"Workouts"},
+        ...(plan.includeNutrition&&plan.nutrition?[{id:"nutrition",label:"Nutrition"}]:[]),
+        {id:"chat",label:"Nova"},
       ];
 
       return(
         <div style={{display:"flex",flexDirection:"column",height:"100%",background:BG}}>
           <Confetti go={confetti}/>
           {activeWorkoutDay&&<WorkoutTracker day={activeWorkoutDay} log={log} setLog={setLog} xp={xp} setXp={setXp} prs={prs} setPrs={setPrs} onFinish={handleFinishWorkout} onExit={()=>setActiveWorkoutDay(null)}/>}
-          <div style={{padding:"14px 18px 0",flexShrink:0}}>
+          {showPRHistory&&<PRHistoryScreen plan={plan} log={log} prs={prs} onClose={()=>setShowPRHistory(false)}/>}
+          <div style={{padding:"12px 18px 0",flexShrink:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontSize:10,letterSpacing:3,color:R,textTransform:"uppercase"}}>Nova Fitness</div>
-                <div style={{fontSize:20,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:TXT}}>{today.toUpperCase()}</div>
+              <div style={{display:"flex",alignItems:"center",gap:9}}>
+                <div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,#B01822,${R})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:900,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",boxShadow:`0 0 12px #CE202944`,flexShrink:0}}>N</div>
+                <div style={{fontSize:10,letterSpacing:3,color:R,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Nova Fitness</div>
               </div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={onAdjust} style={{fontSize:11,fontWeight:600,color:R,background:"#CE202918",border:`1px solid #CE202955`,borderRadius:8,padding:"5px 11px",cursor:"pointer"}}>Adjust Plan</button>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={onAdjust} style={{fontSize:11,fontWeight:600,color:R,background:"#CE202918",border:`1px solid #CE202940`,borderRadius:8,padding:"5px 11px",cursor:"pointer"}}>Adjust Plan</button>
                 <ResetBtn onReset={onReset}/>
               </div>
             </div>
           </div>
           <TabBar tabs={TABS} active={tab} onChange={t=>{setTab(t);if(t==="chat")setTimeout(()=>chatInputRef.current?.focus(),100);}}/>
-          <div style={{flex:1,overflowY:tab==="chat"?"hidden":"auto",padding:tab==="chat"?"11px 16px 0":"11px 16px 20px",display:"flex",flexDirection:"column",minHeight:0}}>
-            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} nutLog={nutLog} photos={photos} setPhotos={setPhotos} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
-            {tab==="workouts"&&<WorkoutsTab plan={plan} log={log} prs={prs} today={today} onBeginWorkout={handleBeginWorkout}/>}
+          <div key={tab} style={{flex:1,overflowY:tab==="chat"?"hidden":"auto",padding:tab==="chat"?"11px 16px 0":"11px 16px 20px",display:"flex",flexDirection:"column",minHeight:0,animation:"tabIn .22s ease"}}>
+            {tab==="dashboard"&&<DashboardTab plan={plan} log={log} xp={xp} bwLog={bwLog} setBwLog={setBwLog} setXp={setXp} nutLog={nutLog} photos={photos} setPhotos={setPhotos} prs={prs} onViewPRs={()=>setShowPRHistory(true)} onBeginWorkout={()=>handleBeginWorkout(null)} onChatFocus={()=>{setTab("chat");setTimeout(()=>chatInputRef.current?.focus(),100);}} today={today}/>}
+            {tab==="workouts"&&<WorkoutsTab plan={plan} log={log} prs={prs} today={today} onBeginWorkout={handleBeginWorkout} onViewPRs={()=>setShowPRHistory(true)}/>}
             {tab==="nutrition"&&plan.includeNutrition&&plan.nutrition&&<NutritionTab plan={plan} nutLog={nutLog} setNutLog={setNutLog} xp={xp} setXp={setXp}/>}
             {tab==="chat"&&<NovaTab plan={plan} log={log} chatMsgs={chatMsgs} setChatMsgs={setChatMsgs} inputRef={chatInputRef}/>}
           </div>
@@ -1257,10 +1497,12 @@
       const[phase,setPhase]=useLS("nv6_phase","onboarding");
       const[plan,setPlan]=useLS("nv6_plan",null);
       const[resetKey,setResetKey]=useState(0);
+      const[splash,setSplash]=useState(true);
       const reset=()=>{nukeAll();setPlan(null);setPhase("onboarding");setResetKey(k=>k+1);};
       return(
         <div style={{background:BG,height:"100vh",color:TXT,fontFamily:"'DM Sans',sans-serif",overflow:"hidden"}}>
-          <div style={{maxWidth:480,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          {splash&&<SplashScreen onDone={()=>setSplash(false)}/>}
+          <div style={{maxWidth:480,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",opacity:splash?0:1,transition:"opacity .3s ease"}}>
             {phase==="onboarding"&&<Chat key={resetKey} onDone={p=>{setPlan(p);setPhase("plan");}} onReset={reset}/>}
             {phase==="adjust"&&plan&&<Chat isAdjust existingPlan={plan} onDone={p=>{setPlan(p);setPhase("plan");}} onCancel={()=>setPhase("dashboard")} onReset={reset}/>}
             {phase==="plan"&&plan&&<PlanPreview plan={plan} onBegin={()=>setPhase("dashboard")} onAdjust={()=>setPhase("adjust")} onReset={reset}/>}
